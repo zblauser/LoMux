@@ -1,0 +1,46 @@
+# dll
+__pycache__/
+*.py[cod]
+*$py.class
+
+# c ext
+*.so
+
+# build/dist
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# linux
+*~
+
+# vm
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# logs
+*.log
+
+# macOS quarantine
+**/._*
