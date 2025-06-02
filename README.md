@@ -4,6 +4,10 @@ LoMux is a lightweight cross-platform GUI for [FFmpeg](https://ffmpeg.org/). Its
 
 ---
 
+![til](./assets/LoMux-Demo.gif)
+
+---
+
 ## Table of Contents
 1. [Repository](#repository)
 2. [Dependencies](#dependencies)  
