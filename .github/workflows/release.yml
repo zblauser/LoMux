@@ -28,7 +28,7 @@ jobs:
             archive: lomux-macos-arm64.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -53,9 +53,9 @@ jobs:
             tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
           fi
         shell: bash
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: ${{ matrix.archive }}
           path: |
             ${{ matrix.archive }}
             LoMux.app.tar.gz
@@ -63,10 +63,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
       - run: ls -laR
       - uses: softprops/action-gh-release@v1
         with:
-          files: binaries/*
+          files: |
+            *.tar.gz
+            *.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
