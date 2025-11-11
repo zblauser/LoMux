@@ -1,42 +1,42 @@
-# dll
-__pycache__/
-*.py[cod]
-*$py.class
+# Rust build
+/target/
+**/*.rs.bk
+*.pdb
+# Cargo.lock
 
-# c ext
-*.so
+# WASM build
+/web/
+/pkg/
+/dist/
 
-# build
-build/
+# Backup
+/backup/
 
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# windows
-Thumbs.db
-ehthumbs.db
-Desktop.ini
-
-# linux
-*~
-
-# vm
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# editors
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
 .vscode/
 .idea/
 *.sublime-project
 *.sublime-workspace
-
-# logs
 *.log
 
-# macOS quarantine
+# Debug
+*.dSYM/
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOvveride
 **/._*
+
+# Windows
+Thumbs.db
+ethumbs.db
+Desktop.ini
+
+# Linux
+*~

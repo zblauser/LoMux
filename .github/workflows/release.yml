@@ -1,0 +1,96 @@
+name: Release
+on:
+	push:
+		tags:
+			- 'v*'
+env:
+	CARGO_TERM_COLOR: always
+jobs:
+	build:
+		strategy:
+			matrix:
+				include:
+					- os: ubuntu-latest
+						target: x86_64-unknown-linux-gnu
+						binary: lomux
+						archive: lomux-linux-x64.tar.gz
+					- os: windows-latest
+						target: x86_64-pc-windows-msvc
+						binary: lomux.exe
+						archive: lomux-windows-x64.zip
+					- os: macos-latest
+						target: x86_64-apple-darwin
+						binary: lomux
+						archive: lomux-macos-x64.tar.gz
+						build_app: true
+					- os: macos-latest
+						target: aarch64-apple-darwin
+						binary: lomux
+						archive: lomux-macos-arm64.tar.gz
+						build_app: true
+		runs-on: ${{ matrix.os }}
+		steps:
+			- uses: actions/checkout@v3
+			- name: Install Rust
+				uses: actions-rs/toolchain@v1
+				with:
+					toolchain: stable
+					target: ${{ matrix.target }}
+					override: true
+			- name: Install dependencies (Linux)
+				if: matrix.os == 'ubuntu-latest'
+				run: |
+					sudo apt-get update
+					sudo apt-get install -y libgtk-3-dev
+			- name: Build
+				run: cargo build --release --target ${{ matrix.target }}
+			
+			- name: Build macOS App Bundle
+				if: matrix.build_app == true
+				run: |
+					cargo install cargo-bundle
+					cargo bundle --release --target ${{ matrix.target }}
+					cd target/${{ matrix.target }}/release/bundle/osx/
+					tar czf ../../../../../${{ matrix.archive }}.app.tar.gz LoMux.app
+			
+			- name: Archive (tar.gz)
+				if: contains(matrix.archive, '.tar.gz') && matrix.os != 'windows-latest'
+				run: |
+					cd target/${{ matrix.target }}/release
+					tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
+			- name: Archive (zip)
+				if: contains(matrix.archive, '.zip')
+				run: |
+					cd target/${{ matrix.target }}/release
+					7z a ../../../${{ matrix.archive }} ${{ matrix.binary }}
+			
+			- name: Upload artifact
+				uses: actions/upload-artifact@v3
+				with:
+					name: ${{ matrix.archive }}
+					path: ${{ matrix.archive }}
+			- name: Upload app bundle
+				if: matrix.build_app == true
+				uses: actions/upload-artifact@v3
+				with:
+					name: ${{ matrix.archive }}.app.tar.gz
+					path: ${{ matrix.archive }}.app.tar.gz
+					
+	release:
+		needs: build
+		runs-on: ubuntu-latest
+		steps:
+			- uses: actions/checkout@v3
+			- name: Download artifacts
+				uses: actions/download-artifact@v3
+				with:
+					path: artifacts
+			- name: Create Release
+				uses: softprops/action-gh-release@v1
+				with:
+					files: artifacts/**/*
+					generate_release_notes: true
+					draft: false
+					prerelease: false
+				env:
+					GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

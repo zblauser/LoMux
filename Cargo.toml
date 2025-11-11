@@ -1,0 +1,37 @@
+[package]
+name = "lomux"
+version = "1.0.1"
+edition = "2021"
+authors = ["zblauser"]
+description = "Lightweight media converter with FFmpeg"
+repository = "https://github.com/zblauser/LoMux"
+license = "MIT"
+
+[package.metadata.bundle]
+name = "lomux"
+identifier = "com.zblauser.lomux"
+category = "public.app-category.utilities"
+icon = ["assets/LoMux.icns", "assets/LoMux.png"]
+
+[dependencies]
+eframe = "0.29"
+egui = "0.29"
+egui_file = "0.19"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+which = "6.0"
+rfd = "0.15"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
