@@ -3,8 +3,10 @@
 A super lightweight media converter that just works. Written in Rust for no reason in particular. (C would've been fine, but here we are, oxidizing perfectly fine python code. Currently working on a WASM build.
 
 <p align="center">
-	<img src="./assets/demo.gif" alt="LoMux demo" width="200" /><br>
-</p><br>
+	<img src="./assets/demo-1.jpg" alt="LoMux demo 1" height="400" width="200" />
+	<img src="./assets/demo-2.jpg" alt="LoMux demo 2" height="400" width="200" />
+    <img src="./assets/demo-3.jpg" alt="LoMux demo 3" height="400" width="200" />
+<br></p>
 LoMux converts your media files using FFmpeg, but with a GUI that doesn't look like it was designed in 1993. It's essentially a wrapper for FFMPEG, that runs on less than a fraction of the ram Adobe's media encoder uses. Next part of the process is working on encorperating damn near every use case I can think of under the presets. Not a rust evanglist btw, just a dude trying to apply an idea.<br><br>
 
 - **Current Presets**: MP4, MKV, WebM, MP3, FLAC, GIF
@@ -12,7 +14,7 @@ LoMux converts your media files using FFmpeg, but with a GUI that doesn't look l
 - **Real-time progress**: Actually shows progress (looking at you, Adobe)
 - **Tiny binary**: 3-5MB vs Electron apps that somehow need 200MB to display a button
 
-## Installation
+## Run LoMux
 <details>
 <summary><b>Releases</b></summary>
 
