@@ -1,16 +1,12 @@
 name: Release
-
 on:
   push:
     tags:
       - 'v*'
-
 permissions:
   contents: write
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -22,68 +18,85 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary: lomux
             archive: lomux-linux-x64.tar.gz
-
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             binary: lomux.exe
             archive: lomux-windows-x64.zip
-
           - os: macos-latest
             target: x86_64-apple-darwin
             binary: lomux
-            archive: lomux-macos-x64.tar.gz
+            archive: lomux-macos-intel.tar.gz
             build_app_bundle: true
-
           - os: macos-latest
             target: aarch64-apple-darwin
             binary: lomux
             archive: lomux-macos-arm64.tar.gz
-
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
+      
       - name: Install Linux deps
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
-
+      
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
-
+      
       - name: Build macOS App Bundle
         if: ${{ matrix.build_app_bundle == true }}
         run: |
           cargo install cargo-bundle
           cargo bundle --release
-          tar czf LoMux.app.tar.gz -C target/release/bundle/osx LoMux.app
-
-      - name: Archive binary
+          
+          # Remove quarantine attribute and add executable permissions
+          xattr -cr target/release/bundle/osx/LoMux.app
+          chmod +x target/release/bundle/osx/LoMux.app/Contents/MacOS/lomux
+          
+          # Create a DMG with proper permissions
+          mkdir -p dist
+          cp -R target/release/bundle/osx/LoMux.app dist/
+          
+          # Create DMG
+          hdiutil create -volname "LoMux" -srcfolder dist -ov -format UDZO LoMux-intel.dmg
+          
+          # Also create a tar.gz for those who prefer it
+          tar czf LoMux-intel.app.tar.gz -C target/release/bundle/osx LoMux.app
+      
+      - name: Archive binary (with ad-hoc signing for macOS)
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
+          
+          # Ad-hoc sign macOS binary to prevent Gatekeeper issues
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            codesign --force --deep --sign - ${{ matrix.binary }}
+            # Remove quarantine attribute
+            xattr -d com.apple.quarantine ${{ matrix.binary }} 2>/dev/null || true
+          fi
+          
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a ../../../${{ matrix.archive }} ${{ matrix.binary }}
           else
             tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
           fi
-
+      
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive }}
           path: ${{ matrix.archive }}
-
-      - name: Upload macOS .app bundle
+      
+      - name: Upload macOS .app bundle and DMG
         if: ${{ matrix.build_app_bundle == true }}
         uses: actions/upload-artifact@v4
         with:
-          name: LoMux.app
-          path: LoMux.app.tar.gz
-
+          name: LoMux-macOS-bundle
+          path: |
+            LoMux-intel.app.tar.gz
+            LoMux-intel.dmg
+  
   release:
     name: Create GitHub Release
     needs: build
@@ -92,9 +105,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-
+      
       - run: ls -laR
-
+      
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -103,5 +116,24 @@ jobs:
           files: |
             *.tar.gz
             *.zip
+            *.dmg
+          body: |
+            ## Installation
+            
+            ### macOS
+            - **Intel**: Download `LoMux-intel.dmg` or `lomux-macos-intel.tar.gz`
+            - **Apple Silicon**: Download `lomux-macos-arm64.tar.gz`
+            
+            **First time running:** Right-click the app and select "Open" to bypass Gatekeeper.
+            
+            ### Windows
+            Download `lomux-windows-x64.zip` and extract.
+            
+            ### Linux
+            Download `lomux-linux-x64.tar.gz`, extract, and make executable with `chmod +x lomux`
+            
+            ## Requirements
+            - FFmpeg (required)
+            - yt-dlp (optional, for YouTube features)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

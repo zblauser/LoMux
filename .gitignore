@@ -2,7 +2,7 @@
 /target/
 **/*.rs.bk
 *.pdb
-# Cargo.lock
+Cargo.lock
 
 # WASM build
 /web/
@@ -18,25 +18,46 @@
 .vscode/
 *.swp
 *.swo
-.vscode/
-.idea/
 *.sublime-project
 *.sublime-workspace
+
+# Logs
 *.log
 
 # Debug
 *.dSYM/
 
-# MacOS
+# macOS
 .DS_Store
 .AppleDouble
-.LSOvveride
+.LSOverride
 **/._*
 
 # Windows
 Thumbs.db
-ethumbs.db
+ehthumbs.db
 Desktop.ini
+$RECYCLE.BIN/
 
 # Linux
 *~
+.directory
+.Trash-*
+
+# LoMux specific
+/lomux_downloads/
+/temp/
+*.mp4.tmp
+*.mkv.tmp
+
+# Build artifacts
+*.dmg
+*.app
+*.exe
+*.AppImage
+*.deb
+*.rpm
+
+# Release archives
+*.tar.gz
+*.zip

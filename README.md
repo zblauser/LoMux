@@ -1,16 +1,28 @@
 # LoMux
 ## Overview
-A super lightweight media converter that just works. Written in Rust for no reason in particular. (C would've been fine, but here we are, oxidizing perfectly fine python code. Currently working on a WASM build.
+A super lightweight media converter and youtube downloader that just works. Written in Rust for no reason in particular. (C would've been fine, but here we are, oxidizing perfectly fine python code. Currently working on a WASM build.
 
-<p align="center">
-	<img src="./assets/demo-1.jpg" alt="LoMux demo 1" height="400" width="200" />
-	<img src="./assets/demo-2.jpg" alt="LoMux demo 2" height="400" width="200" />
-    <img src="./assets/demo-3.jpg" alt="LoMux demo 3" height="400" width="200" />
-<br></p>
-LoMux converts your media files using FFmpeg, but with a GUI that doesn't look like it was designed in 1993. It's essentially a wrapper for FFMPEG, that runs on less than a fraction of the ram Adobe's media encoder uses. Next part of the process is working on encorperating damn near every use case I can think of under the presets. Not a rust evanglist btw, just a dude trying to apply an idea.<br><br>
+<p align="center"><img src="./assets/lomux.jpg" alt="LoMux" width="600" height="400" /></p>
 
-- **Current Presets**: MP4, MKV, WebM, MP3, FLAC, GIF
+<table align="center">
+	<tr>
+		<td align="center">
+			<img src="./assets/demo-1.jpg" alt="File upload & Presets" height="300" width="300"/><br/>
+			[Files & Presets]
+        </td>
+        <td align="center">
+			<img src="./assets/demo-2.jpg" alt="Metadata" height="300" width="300" /><br/>
+			[Metadata]
+		</td>
+	</tr>
+</table><br>
+
+LoMux converts your media files using FFmpeg (Youtube downloading with yt-dlp), but with a GUI that doesn't look like it was designed in 1993. It's essentially a wrapper for FFMPEG, that runs on less than a fraction of the ram Adobe's media encoder uses. Next part of the process is working on encorperating damn near every use case I can think of under the presets. Not a rust evanglist btw, just a dude trying to apply an idea.<br><br>
+
+- **Current Presets**: Web & Social, Devices, Professional, Audio, Match Source, Custom
 - **Batch processing**: Throw multiple files at it
+- **Youtube integration**: Download/Convert YT files in one step
+- **Metadata editing**: Per batch, or per file
 - **Real-time progress**: Actually shows progress (looking at you, Adobe)
 - **Tiny binary**: 3-5MB vs Electron apps that somehow need 200MB to display a button
 
@@ -34,25 +46,33 @@ cargo build --release
 </details>
 
 ## Requirements
-- FFmpeg (the real MVP)
+- [FFMPEG](https://ffmpeg.org/download.html) (the real MVP)
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) (optional, but needed for yt download)
 
-## Why Not Just Use FFmpeg?
+## Why Not Just Use FFmpeg/yt-dlp?
 I mean, laziness I suppose. `ffmpeg -i input.mp4 -c:v libx264 -crf 23 -c:a aac -b:a 128k output.mp4` is pretty verbose for non FFMPEG users. I read the documentation so you don't have to. Nevertheless, don't forget to thank them for making it possible.
 
 ## Why Rust?
 No certain reason, I was bored?.. and you're getting free conversion softeare. Could've written this in C? Sure, and maybe I should have. Did I? No. Will it matter to you? Most of you, probably not.
 
 ## Change Log
-### v1.0.1 (Latest)<br>
-Complete rewrite, same logic. Yes, I am kind of sarcastically pushing this as a minor release, as aside from the language (the code base wasn't huge), it functions identically, though albiet with a bit of a speed boost.
 
+### v1.0.2 (Latest)<br>
+UI Update, and more defined presets
+- UI continues to improve, and now has a day/night mode
+- You can now download and convert youtube files (via url), and even add them to a batch
+- Further defined presets, still reserving the ability to customize
+- Edit the meta data of entire batches at once, or per file
+
+<details>
+<summary><b>Previous Verions</b></summary>
+
+***v1.0.1***<br>
+Complete rewrite, same logic. Yes, I am kind of sarcastically pushing this as a minor release, as aside from the language (the code base wasn't huge), it functions identically, though albiet with a bit of a speed boost.
 - Rewrote everything in Rust, because why not
 - Binary went from 50MB to 3MB
 - Actually runs at native speed now
 - UI is 10x more responsive
-
-<details>
-<summary><b>Previous Verions</b></summary>
 
 ***v1.0.0***
 - Original Python/Tkinter version
@@ -65,8 +85,9 @@ Complete rewrite, same logic. Yes, I am kind of sarcastically pushing this as a 
 </details>
 
 ## Roadmap
-- Hella new presets
-- WASM version
+- Enhance preset database
+- WASM build
+- Host it
 
 ## Contributing
 If you share the belief that simplicity empowers creativity, feel free to contribute.
