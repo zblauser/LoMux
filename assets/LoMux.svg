@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+	<!-- Background rounded square -->
+	<rect width="512" height="512" rx="108" fill="#131318"/>
+	<rect x="8" y="8" width="496" height="496" rx="100" fill="#18181f" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.06"/>
+
+	<!-- Film sprocket holes - left column -->
+	<rect x="56" y="72" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="56" y="122" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="56" y="172" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="56" y="222" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="56" y="272" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="56" y="322" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="56" y="372" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+
+	<!-- Film sprocket holes - right column -->
+	<rect x="438" y="72" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="438" y="122" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="438" y="172" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="438" y="222" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="438" y="272" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="438" y="322" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+	<rect x="438" y="372" width="18" height="30" rx="5" fill="#ffffff" opacity="0.1"/>
+
+	<!-- Film strip vertical borders -->
+	<line x1="90" y1="52" x2="90" y2="460" stroke="#ffffff" stroke-width="1" stroke-opacity="0.07"/>
+	<line x1="422" y1="52" x2="422" y2="460" stroke="#ffffff" stroke-width="1" stroke-opacity="0.07"/>
+
+	<!-- Center sine wave - the main mark -->
+	<path
+		d="M 110 256 Q 150 156, 195 256 Q 240 356, 280 256 Q 320 156, 360 256 Q 400 356, 430 256"
+		fill="none"
+		stroke="#ffffff"
+		stroke-width="10"
+		stroke-linecap="round"
+		stroke-linejoin="round"
+		opacity="0.88"
+	/>
+
+	<!-- Subtle secondary wave for depth -->
+	<path
+		d="M 120 256 Q 158 180, 200 256 Q 242 332, 280 256 Q 318 180, 356 256 Q 394 332, 420 256"
+		fill="none"
+		stroke="#ffffff"
+		stroke-width="3"
+		stroke-linecap="round"
+		opacity="0.15"
+	/>
+</svg>
