@@ -169,6 +169,7 @@ impl PresetCategory {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct EncodingPreset {
 	name: String,
 	category: PresetCategory,
@@ -1103,6 +1104,7 @@ fn alpha_blend(color: egui::Color32, alpha: u8) -> egui::Color32 {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum MetadataMode {
 	None,
 	Global,

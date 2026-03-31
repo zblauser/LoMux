@@ -160,7 +160,3 @@ No certain reason, I was bored. You're getting free conversion software. Could'v
 ## Contributing
 
 If you share the belief that simplicity empowers creativity, feel free to contribute. Fork, PR, bug report, feature request — all welcome. Ensure your code follows the existing style (tabs, minimal comments, blank lines stay blank). Complaints go to `/dev/null`.
-
-## License
-
-[MIT](LICENSE)
