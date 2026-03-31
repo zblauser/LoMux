@@ -18,6 +18,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary: lomux
             archive: lomux-linux-x64.tar.gz
+            deb: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             binary: lomux.exe
@@ -26,7 +27,6 @@ jobs:
             target: x86_64-apple-darwin
             binary: lomux
             archive: lomux-macos-intel.tar.gz
-            build_app_bundle: true
           - os: macos-latest
             target: aarch64-apple-darwin
             binary: lomux
@@ -37,66 +37,84 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      
-      - name: Install Linux deps
+      - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
-      
-      - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
-      
-      - name: Build macOS App Bundle
-        if: ${{ matrix.build_app_bundle == true }}
         run: |
-          cargo install cargo-bundle
-          cargo bundle --release
-          
-          # Remove quarantine attribute and add executable permissions
-          xattr -cr target/release/bundle/osx/LoMux.app
-          chmod +x target/release/bundle/osx/LoMux.app/Contents/MacOS/lomux
-          
-          # Create a DMG with proper permissions
-          mkdir -p dist
-          cp -R target/release/bundle/osx/LoMux.app dist/
-          
-          # Create DMG
-          hdiutil create -volname "LoMux" -srcfolder dist -ov -format UDZO LoMux-intel.dmg
-          
-          # Also create a tar.gz for those who prefer it
-          tar czf LoMux-intel.app.tar.gz -C target/release/bundle/osx LoMux.app
-      
-      - name: Archive binary (with ad-hoc signing for macOS)
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libssl-dev dpkg-dev
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Ad-hoc sign macOS binary
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep --sign - target/${{ matrix.target }}/release/${{ matrix.binary }}
+          xattr -cr target/${{ matrix.target }}/release/${{ matrix.binary }}
+      - name: Build .deb package
+        if: matrix.deb
+        run: |
+          mkdir -p dpkg/usr/bin
+          mkdir -p dpkg/usr/share/applications
+          mkdir -p dpkg/usr/share/icons/hicolor/256x256/apps
+          mkdir -p dpkg/DEBIAN
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} dpkg/usr/bin/lomux
+          chmod 755 dpkg/usr/bin/lomux
+          # Desktop entry
+          cat > dpkg/usr/share/applications/lomux.desktop << 'DESKTOP'
+          [Desktop Entry]
+          Name=LoMux
+          Comment=Lightweight media converter
+          Exec=lomux
+          Icon=lomux
+          Type=Application
+          Categories=AudioVideo;Audio;Video;
+          Terminal=false
+          Keywords=converter;ffmpeg;media;video;audio;
+          DESKTOP
+          # Copy icon if it exists
+          if [ -f assets/LoMux.png ]; then
+            cp assets/LoMux.png dpkg/usr/share/icons/hicolor/256x256/apps/lomux.png
+          fi
+          # Control file
+          VERSION="${GITHUB_REF_NAME#v}"
+          INSTALLED_SIZE=$(du -sk dpkg/usr | cut -f1)
+          cat > dpkg/DEBIAN/control << EOF
+          Package: lomux
+          Version: ${VERSION}
+          Section: video
+          Priority: optional
+          Architecture: amd64
+          Installed-Size: ${INSTALLED_SIZE}
+          Depends: ffmpeg
+          Suggests: yt-dlp
+          Maintainer: zblauser <zblauser@users.noreply.github.com>
+          Homepage: https://github.com/zblauser/LoMux
+          Description: Lightweight media converter with FFmpeg and yt-dlp
+           LoMux converts media files using FFmpeg with a clean GUI.
+           Download from YouTube, convert between formats, edit metadata.
+           Professional presets for web, social, devices, and broadcast.
+          EOF
+          dpkg-deb --build dpkg "lomux_${VERSION}_amd64.deb"
+      - name: Archive binary
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          
-          # Ad-hoc sign macOS binary to prevent Gatekeeper issues
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            codesign --force --deep --sign - ${{ matrix.binary }}
-            # Remove quarantine attribute
-            xattr -d com.apple.quarantine ${{ matrix.binary }} 2>/dev/null || true
-          fi
-          
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a ../../../${{ matrix.archive }} ${{ matrix.binary }}
           else
             tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
           fi
-      
-      - uses: actions/upload-artifact@v4
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.archive }}
           path: ${{ matrix.archive }}
-      
-      - name: Upload macOS .app bundle and DMG
-        if: ${{ matrix.build_app_bundle == true }}
+      - name: Upload deb artifact
+        if: matrix.deb
         uses: actions/upload-artifact@v4
         with:
-          name: LoMux-macOS-bundle
-          path: |
-            LoMux-intel.app.tar.gz
-            LoMux-intel.dmg
-  
+          name: lomux-deb
+          path: "*.deb"
   release:
     name: Create GitHub Release
     needs: build
@@ -105,9 +123,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      
-      - run: ls -laR
-      
+      - run: ls -la
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -116,24 +132,62 @@ jobs:
           files: |
             *.tar.gz
             *.zip
-            *.dmg
+            *.deb
           body: |
-            ## Installation
-            
-            ### macOS
-            - **Intel**: Download `LoMux-intel.dmg` or `lomux-macos-intel.tar.gz`
-            - **Apple Silicon**: Download `lomux-macos-arm64.tar.gz`
-            
-            **First time running:** Right-click the app and select "Open" to bypass Gatekeeper.
-            
-            ### Windows
-            Download `lomux-windows-x64.zip` and extract.
-            
-            ### Linux
-            Download `lomux-linux-x64.tar.gz`, extract, and make executable with `chmod +x lomux`
-            
-            ## Requirements
-            - FFmpeg (required)
-            - yt-dlp (optional, for YouTube features)
+            ## LoMux ${{ github.ref_name }}
+            ### Installation
+            **macOS (Intel):** Download `lomux-macos-intel.tar.gz`
+            **macOS (Apple Silicon):** Download `lomux-macos-arm64.tar.gz`
+            > First launch: Right-click → Open to bypass Gatekeeper.
+            > Or install via Homebrew: `brew install zblauser/tap/lomux`
+            **Windows:** Download `lomux-windows-x64.zip` and extract.
+            **Linux (.deb):** Download the `.deb` and install with `sudo dpkg -i lomux_*.deb`
+            **Linux (binary):** Download `lomux-linux-x64.tar.gz`, extract, `chmod +x lomux`
+            ### Requirements
+            - [FFmpeg](https://ffmpeg.org/download.html) (required)
+            - [yt-dlp](https://github.com/yt-dlp/yt-dlp) (optional, for YouTube downloads)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update formula
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARBALL_URL="https://github.com/zblauser/LoMux/archive/${GITHUB_REF_NAME}.tar.gz"
+          # Download the source tarball and compute sha256
+          curl -sL "$TARBALL_URL" -o source.tar.gz
+          SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
+          echo "Version: $VERSION"
+          echo "SHA256: $SHA256"
+          # Clone the tap repo
+          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/zblauser/homebrew-tap.git" tap
+          cd tap
+          mkdir -p Formula
+          cat > Formula/lomux.rb << FORMULA
+          class Lomux < Formula
+            desc "Lightweight media converter with FFmpeg and yt-dlp integration"
+            homepage "https://github.com/zblauser/LoMux"
+            url "https://github.com/zblauser/LoMux/archive/v${VERSION}.tar.gz"
+            sha256 "${SHA256}"
+            license "GPL-3.0-only"
+            depends_on "rust" => :build
+            depends_on "ffmpeg"
+            def install
+              system "cargo", "install", "--locked", "--root", prefix, "--path", "."
+            end
+            test do
+              assert_match "LoMux", shell_output("#{bin}/lomux --help 2>&1", 1)
+            end
+          end
+          FORMULA
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/lomux.rb
+          git commit -m "Update lomux to ${VERSION}" || echo "No changes"
+          git push || echo "Push failed — create the homebrew-tap repo first"
+

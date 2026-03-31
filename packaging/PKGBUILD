@@ -1,0 +1,29 @@
+# Maintainer: zblauser <zblauser@users.noreply.github.com>
+pkgname=lomux
+pkgver=1.1.0
+pkgrel=1
+pkgdesc='Lightweight media converter with FFmpeg and yt-dlp integration'
+arch=('x86_64')
+url='https://github.com/zblauser/LoMux'
+license=('MIT')
+depends=('ffmpeg' 'gtk3')
+makedepends=('rust' 'cargo')
+optdepends=('yt-dlp: YouTube download support')
+source=("$pkgname-$pkgver.tar.gz::https://github.com/zblauser/LoMux/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+	cd "LoMux-$pkgver"
+	cargo build --release --locked
+}
+
+package() {
+	cd "LoMux-$pkgver"
+	install -Dm755 "target/release/lomux" "$pkgdir/usr/bin/lomux"
+	install -Dm644 "assets/lomux.desktop" "$pkgdir/usr/share/applications/lomux.desktop" 2>/dev/null || true
+	install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE" 2>/dev/null || true
+
+	if [ -f "assets/LoMux.png" ]; then
+		install -Dm644 "assets/LoMux.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/lomux.png"
+	fi
+}

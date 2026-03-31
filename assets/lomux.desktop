@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=LoMux
+Comment=Lightweight media converter powered by FFmpeg
+Exec=lomux
+Icon=lomux
+Type=Application
+Categories=AudioVideo;Audio;Video;
+Terminal=false
+Keywords=converter;ffmpeg;media;video;audio;youtube;
+StartupWMClass=lomux
