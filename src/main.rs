@@ -1789,10 +1789,10 @@ impl AppTheme {
 		let small_rounding = egui::Rounding::same((self.rounding * 0.5).max(2.0));
 
 		visuals.widgets.noninteractive.bg_fill = self.bg_secondary;
-		visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, self.text_secondary);
+		visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, self.text_secondary);
 		visuals.widgets.noninteractive.rounding = rounding;
 		visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(
-			0.5,
+			0.5_f32,
 			if self.dark { lighten(self.bg_secondary, 20) } else { darken(self.bg_secondary, 15) }
 		);
 
@@ -1801,15 +1801,15 @@ impl AppTheme {
 		} else {
 			darken(self.bg_secondary, 8)
 		};
-		visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, self.text_primary);
+		visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, self.text_primary);
 		visuals.widgets.inactive.rounding = small_rounding;
 
 		visuals.widgets.hovered.bg_fill = alpha_blend(self.accent, 50);
-		visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, self.text_primary);
+		visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0_f32, self.text_primary);
 		visuals.widgets.hovered.rounding = small_rounding;
 
 		visuals.widgets.active.bg_fill = alpha_blend(self.accent, 80);
-		visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5, self.text_primary);
+		visuals.widgets.active.fg_stroke = egui::Stroke::new(1.5_f32, self.text_primary);
 		visuals.widgets.active.rounding = small_rounding;
 
 		visuals.widgets.open.bg_fill = if self.dark {
@@ -1817,11 +1817,11 @@ impl AppTheme {
 		} else {
 			darken(self.bg_secondary, 12)
 		};
-		visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, self.accent);
+		visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0_f32, self.accent);
 		visuals.widgets.open.rounding = small_rounding;
 
 		visuals.selection.bg_fill = alpha_blend(self.accent, 60);
-		visuals.selection.stroke = egui::Stroke::new(1.0, self.accent);
+		visuals.selection.stroke = egui::Stroke::new(1.0_f32, self.accent);
 
 		visuals.hyperlink_color = self.accent;
 		visuals.window_rounding = rounding;
