@@ -45,11 +45,20 @@ jobs:
             libxcb-xfixes0-dev libxkbcommon-dev libssl-dev dpkg-dev
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
-      - name: Ad-hoc sign macOS binary
+      - name: Build macOS .app bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          packaging/macos-app.sh \
+            target/${{ matrix.target }}/release/${{ matrix.binary }} \
+            target/${{ matrix.target }}/release \
+            "$VERSION"
+      - name: Ad-hoc sign macOS app
         if: runner.os == 'macOS'
         run: |
-          codesign --force --deep --sign - target/${{ matrix.target }}/release/${{ matrix.binary }}
-          xattr -cr target/${{ matrix.target }}/release/${{ matrix.binary }}
+          codesign --force --deep --sign - target/${{ matrix.target }}/release/LoMux.app
+          xattr -cr target/${{ matrix.target }}/release/LoMux.app
       - name: Build .deb package
         if: matrix.deb
         run: |
@@ -101,6 +110,8 @@ jobs:
           cd target/${{ matrix.target }}/release
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a ../../../${{ matrix.archive }} ${{ matrix.binary }}
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            tar czf ../../../${{ matrix.archive }} LoMux.app ${{ matrix.binary }}
           else
             tar czf ../../../${{ matrix.archive }} ${{ matrix.binary }}
           fi

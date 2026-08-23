@@ -1,6 +1,6 @@
 [package]
 name = "lomux"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["zblauser"]
 description = "Advanced media converter with FFmpeg, yt-dlp integration, and Adobe-style presets"
@@ -12,7 +12,7 @@ categories = ["multimedia", "multimedia::video", "multimedia::audio"]
 [package.metadata.bundle]
 name = "LoMux"
 identifier = "com.zblauser.lomux"
-version = "1.1.0"
+version = "1.2.0"
 resources = ["assets/"]
 copyright = "Copyright (c) 2025 zblauser"
 category = "public.app-category.video"
@@ -34,6 +34,9 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.19", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

@@ -1,5 +1,5 @@
 Name:           lomux
-Version:        1.1.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        Lightweight media converter with FFmpeg and yt-dlp integration
 
