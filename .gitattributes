@@ -1,0 +1,12 @@
+# GitHub builds the tag tarball with `git archive`, which honors export-ignore.
+# That tarball is what Homebrew, the AUR PKGBUILD, and the RPM spec download and
+# build from, so anything here that a build never touches is pure download weight.
+# These files stay in the repository — the README still renders the images on
+# GitHub — they are simply left out of the archive.
+
+assets/demo.gif           export-ignore
+assets/screenshot.png     export-ignore
+packaging/capture-demo.sh export-ignore
+.github/                  export-ignore
+.gitignore                export-ignore
+.gitattributes            export-ignore
