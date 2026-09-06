@@ -1,8 +1,10 @@
 # Rust build
 /target/
 **/*.rs.bk
+*.bak
 *.pdb
-Cargo.lock
+# Cargo.lock is COMMITTED on purpose: this is a binary crate, and the Homebrew
+# formula runs `cargo install --locked`, which fails outright without it.
 
 # WASM build
 /web/

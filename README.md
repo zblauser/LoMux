@@ -18,6 +18,8 @@ LoMux wraps FFmpeg (and optionally yt-dlp) in a clean native GUI with everything
   - Audio: MP3, FLAC, AAC, Opus, WAV, AIFF, AC-3, podcast and audiobook mono
   - Full custom with codec/container/bitrate/CRF control.
 
+**Per-Item Presets**: every file in the queue can carry its own preset. One MP4 for the client, one ProRes for the edit, one MP3 for the podcast — same run, one click. Files that override the batch preset say so on their row.
+
 **Images**: PNG/JPEG/TIFF/BMP image sequences from video, single-frame grabs, and straight photo conversion with optional scaling
 
 **Trim**: set in and out points per file (`SS`, `MM:SS`, or `HH:MM:SS`); progress tracks the trimmed range, not the source length.
@@ -143,7 +145,23 @@ No certain reason, I was bored. You're getting free conversion software. Could'v
 
 ## Changelog
 
-### v1.2.0 (Current)
+### v1.3.0 (Current)
+**New**
+- **Per-item presets.** Pick a preset for the whole queue like always, then override it on any individual file. The row shows which preset it's using, and the file list says "mixed presets" so a batch change never looks like it did nothing.
+- The console names the preset it used for each file as it converts, so a mixed batch is readable after the fact
+
+**Fixes**
+- `brew install`, the AUR package, and the RPM build were all broken. `Cargo.lock` was gitignored, so it never made it into the release tarball — and all three build with `--locked`, which refuses to run without one. Lockfile is committed now.
+- The Homebrew tap had been stuck on v1.1.0 since it was created. The release workflow signed in with a token scoped to this repo, which can't push to the tap repo, and then swallowed the failure and reported success. It now uses a proper token, fails loudly, and refuses to publish a formula it knows won't build.
+- The formula it generated claimed GPL-3.0 (MIT since v1.2.0) and shipped a self-test asserting the wrong exit code
+- `--version` was hardcoded, so a 1.3.0 build would have cheerfully told you it was 1.2.0
+- The Discord preset promised "under 25MB" at a bitrate aimed at nothing in particular. Discord's free cap is 10MB now — the preset actually targets it, about 67 seconds of 720p30.
+- Subtitle container warnings checked the batch preset instead of the file you had selected
+
+<details>
+<summary><b>Previous Versions</b></summary>
+
+### v1.2.0
 **New**
 - Image sequences (PNG/JPEG/TIFF/BMP), single-image conversion, and single-frame grabs
 - Trim with in/out points per file
@@ -169,9 +187,6 @@ No certain reason, I was bored. You're getting free conversion software. Could'v
 - Window title is just "LoMux"; version moved to About
 - Curated theme colors are now fixed; customization lives in its own persistent slot
 - Licensed under MIT (was GPL-3.0)
-
-<details>
-<summary><b>Previous Versions</b></summary>
 
 ### v1.1.0
 - Theme system with 6 curated themes + custom editor
@@ -203,7 +218,7 @@ No certain reason, I was bored. You're getting free conversion software. Could'v
 </details>
 
 ## Horizon
-- Per-item presets (assign a different preset to each file in the queue)
+- Fan-out: one source file producing several outputs in a single run
 - Hardware encoding (VideoToolbox, NVENC, QSV, AMF)
 - Watch folders
 - Subtitle extraction to sidecar files
