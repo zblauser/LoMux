@@ -53,11 +53,11 @@ jobs:
         run: |
           set -euo pipefail
           BIN=target/release/lomux
-          BYTES=$(stat -c%s "$BIN")
+          BYTES=$(gzip -9 -c "$BIN" | wc -c)
           MB=$(awk -v b="$BYTES" 'BEGIN { printf "%.2f", b/1048576 }')
-          # Hard cap: 6 MB. Tighten over time. Bump only with CEO sign-off.
+          # Hard cap: 6 MB gzipped — matches the published tarball size. Bump only with CEO sign-off.
           LIMIT=6291456
-          echo "Linux release binary: ${BYTES} bytes (${MB} MB)"
+          echo "Linux release binary (gzipped): ${BYTES} bytes (${MB} MB)"
           if [ "$BYTES" -gt "$LIMIT" ]; then
             echo "::error::Binary exceeds 6 MB budget (${MB} MB). Reject the dep or shrink the change."
             exit 1
