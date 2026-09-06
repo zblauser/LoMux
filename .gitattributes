@@ -6,7 +6,6 @@
 
 assets/demo.gif           export-ignore
 assets/screenshot.png     export-ignore
-packaging/capture-demo.sh export-ignore
 .github/                  export-ignore
 .gitignore                export-ignore
 .gitattributes            export-ignore
