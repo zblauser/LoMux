@@ -19,6 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -27,6 +29,10 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libxcb-render0-dev libxcb-shape0-dev \
             libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
       - run: cargo check --all-targets
+      # Clippy catches what check does not. It found a real hang risk in v1.3.0:
+      # reader.lines().flatten() spins forever on a repeated read error, and both
+      # affected loops only test the cancel flag inside the loop body.
+      - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --release
 
   size-gate:
@@ -47,11 +53,11 @@ jobs:
         run: |
           set -euo pipefail
           BIN=target/release/lomux
-          BYTES=$(gzip -9 -c "$BIN" | wc -c)
+          BYTES=$(stat -c%s "$BIN")
           MB=$(awk -v b="$BYTES" 'BEGIN { printf "%.2f", b/1048576 }')
-          # Hard cap: 6 MB gzipped — matches the published tarball size. Bump only with CEO sign-off.
+          # Hard cap: 6 MB. Tighten over time. Bump only with CEO sign-off.
           LIMIT=6291456
-          echo "Linux release binary (gzipped): ${BYTES} bytes (${MB} MB)"
+          echo "Linux release binary: ${BYTES} bytes (${MB} MB)"
           if [ "$BYTES" -gt "$LIMIT" ]; then
             echo "::error::Binary exceeds 6 MB budget (${MB} MB). Reject the dep or shrink the change."
             exit 1

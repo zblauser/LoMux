@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::io::{BufRead, BufReader};
 
-const VERSION: &str = "1.2.0";
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const DOWNLOAD_PHASE_SHARE: f32 = 0.5;
 
@@ -396,16 +396,16 @@ impl EncodingPreset {
 				container: Container::Mp4,
 				video_codec: VideoCodec::H264,
 				audio_codec: AudioCodec::Aac,
-				video_bitrate: Some(2500),
-				audio_bitrate: Some(128),
+				video_bitrate: Some(1200),
+				audio_bitrate: Some(96),
 				video_crf: None,
 				fps: Some(30),
 				resolution: Some("1280x720".into()),
 				single_image: false,
-			codec_profile: None,
+				codec_profile: None,
 				audio_channels: None,
 				audio_sample_rate: None,
-				description: "Under 25MB for free Discord uploads".into(),
+				description: "720p sized for Discord's 10MB free upload cap".into(),
 			},
 			Self {
 				name: "Web GIF".into(),
@@ -1277,6 +1277,7 @@ struct MediaFile {
 	trim_end: String,
 	subtitle_path: Option<PathBuf>,
 	subtitle_mode: SubtitleMode,
+	preset_override: Option<EncodingPreset>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1300,6 +1301,7 @@ impl MediaFile {
 			trim_end: String::new(),
 			subtitle_path: None,
 			subtitle_mode: SubtitleMode::None,
+			preset_override: None,
 		}
 	}
 
@@ -1315,7 +1317,12 @@ impl MediaFile {
 			trim_end: String::new(),
 			subtitle_path: None,
 			subtitle_mode: SubtitleMode::None,
+			preset_override: None,
 		}
+	}
+
+	fn effective_preset<'a>(&'a self, batch: &'a EncodingPreset) -> &'a EncodingPreset {
+		self.preset_override.as_ref().unwrap_or(batch)
 	}
 
 	fn display_name(&self) -> String {
@@ -1421,10 +1428,8 @@ impl ToolDetector {
 			return Some(path);
 		}
 
-		for path in Self::get_search_paths(tool_name) {
-			if path.exists() {
-				return Some(path);
-			}
+		if let Some(path) = Self::get_search_paths(tool_name).into_iter().find(|p| p.exists()) {
+			return Some(path);
 		}
 
 		#[cfg(target_os = "macos")]
@@ -1450,6 +1455,10 @@ impl ToolDetector {
 		}).as_deref()
 	}
 
+	// Both cfg arms return explicitly so the two platform branches read identically.
+	// Making the non-Windows one implicit would leave the Windows arm's `return` looking
+	// arbitrary, so keep the symmetry and silence the lint here rather than in CI.
+	#[allow(clippy::needless_return)]
 	fn get_search_paths(tool_name: &str) -> Vec<PathBuf> {
 		#[cfg(target_os = "windows")]
 		{
@@ -2010,7 +2019,7 @@ impl LoMuxApp {
 
 		let files = self.media_files.clone();
 		let output_dir = self.output_dir.clone().unwrap();
-		let preset = self.active_preset().clone();
+		let batch_preset = self.active_preset().clone();
 		let ffmpeg = self.tools.ffmpeg_path.clone().unwrap();
 		let ffprobe = self.tools.ffprobe_path.clone();
 		let ytdlp = self.tools.ytdlp_path.clone();
@@ -2045,6 +2054,7 @@ impl LoMuxApp {
 				}
 
 				let current = idx + 1;
+				let preset = file.effective_preset(&batch_preset).clone();
 
 				if file.is_youtube {
 					if let Some(ref ytdlp_path) = ytdlp {
@@ -2173,8 +2183,8 @@ impl LoMuxApp {
 				let pass_count = passes.len() as f32;
 
 				console.lock().unwrap().push_str(&format!(
-					"\n─── Converting {} ({}/{}) ───\n",
-					file.display_name(), current, total
+					"\n─── Converting {} ({}/{}) — {} ───\n",
+					file.display_name(), current, total, preset.name
 				));
 
 				let mut exit_status: std::io::Result<std::process::ExitStatus> =
@@ -2216,7 +2226,7 @@ impl LoMuxApp {
 					let stderr = child.stderr.take().unwrap();
 					let reader = BufReader::new(stderr);
 
-					for line in reader.lines().flatten() {
+					for line in reader.lines().map_while(Result::ok) {
 						if *cancel_flag.lock().unwrap() {
 							kill_process(&child);
 							break;
@@ -2355,8 +2365,15 @@ impl LoMuxApp {
 				ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
 					let count = self.media_files.len();
 					if count > 0 {
+						let overridden = self.media_files.iter()
+							.filter(|f| f.preset_override.is_some())
+							.count();
+						let mut text = format!("{} file{}", count, if count == 1 { "" } else { "s" });
+						if overridden > 0 {
+							text.push_str(" · mixed presets");
+						}
 						ui.label(
-							egui::RichText::new(format!("{} file{}", count, if count == 1 { "" } else { "s" }))
+							egui::RichText::new(text)
 								.small()
 								.weak()
 						);
@@ -2444,11 +2461,15 @@ impl LoMuxApp {
 								};
 
 								let name = file.display_name();
+								let badge = file.preset_override.as_ref()
+									.map(|p| format!("  🎚 {}", truncate_str(&p.name, 16)))
+									.unwrap_or_default();
+								let (wide, narrow) = if badge.is_empty() { (45, 38) } else { (26, 20) };
 								let label = match state {
 									DownloadStatus::Downloading(fraction) if file.is_youtube => {
-										format!("{} {} — {:.0}%", icon, truncate_str(&name, 38), fraction * 100.0)
+										format!("{} {} — {:.0}%{}", icon, truncate_str(&name, narrow), fraction * 100.0, badge)
 									}
-									_ => format!("{} {}", icon, truncate_str(&name, 45)),
+									_ => format!("{} {}{}", icon, truncate_str(&name, wide), badge),
 								};
 
 								if ui.selectable_label(is_selected, label).clicked() {
@@ -2549,6 +2570,108 @@ impl LoMuxApp {
 						}
 					});
 			}
+		});
+	}
+
+	fn show_preset_override_panel(&mut self, ui: &mut egui::Ui) {
+		ui.collapsing("Per-File Preset", |ui| {
+			let Some(idx) = self.selected_file_index else {
+				ui.label(
+					egui::RichText::new("Select a file to give it its own preset")
+						.weak()
+				);
+				return;
+			};
+			if idx >= self.media_files.len() {
+				return;
+			}
+
+			let batch_name = self.active_preset().name.clone();
+			let current = self.media_files[idx].preset_override.as_ref().map(|p| p.name.clone());
+			let selected_text = match current {
+				Some(ref name) => truncate_str(name, 30),
+				None => format!("Batch preset ({})", truncate_str(&batch_name, 20)),
+			};
+
+			let mut chosen: Option<Option<EncodingPreset>> = None;
+
+			egui::ComboBox::from_id_salt("preset_override")
+				.width(ui.available_width() - 20.0)
+				.selected_text(selected_text)
+				.show_ui(ui, |ui| {
+					if ui.selectable_label(
+						current.is_none(),
+						format!("Batch preset ({})", batch_name),
+					).clicked() {
+						chosen = Some(None);
+					}
+					ui.separator();
+
+					for category in PresetCategory::all() {
+						if *category == PresetCategory::Custom {
+							continue;
+						}
+						let mut headed = false;
+						for preset in &self.presets {
+							if preset.category != *category {
+								continue;
+							}
+							if !headed {
+								ui.label(egui::RichText::new(category.label()).small().weak());
+								headed = true;
+							}
+							let is_current = current.as_deref() == Some(preset.name.as_str());
+							if ui.selectable_label(is_current, &preset.name).clicked() {
+								chosen = Some(Some(preset.clone()));
+							}
+						}
+					}
+
+					ui.label(egui::RichText::new(PresetCategory::Custom.label()).small().weak());
+					let is_current = current.as_deref() == Some(self.custom_preset.name.as_str());
+					if ui.selectable_label(is_current, &self.custom_preset.name).clicked() {
+						chosen = Some(Some(self.custom_preset.clone()));
+					}
+					for preset in &self.imported_presets {
+						let is_current = current.as_deref() == Some(preset.name.as_str());
+						if ui.selectable_label(is_current, &preset.name).clicked() {
+							chosen = Some(Some(preset.clone()));
+						}
+					}
+				});
+
+			if let Some(value) = chosen {
+				self.media_files[idx].preset_override = value;
+			}
+
+			if let Some(ref preset) = self.media_files[idx].preset_override {
+				ui.label(
+					egui::RichText::new(format!("{} — {}", preset.description, preset.info_line()))
+						.small()
+						.weak()
+				);
+				if preset.category == PresetCategory::Custom {
+					ui.label(
+						egui::RichText::new("Snapshot taken on assignment — later edits to Custom do not apply")
+							.small()
+							.weak()
+					);
+				}
+			}
+
+			ui.horizontal(|ui| {
+				if ui.small_button("Use for All Files").clicked() {
+					let value = self.media_files[idx].preset_override.clone();
+					for file in &mut self.media_files {
+						file.preset_override = value.clone();
+					}
+				}
+				if ui.small_button("Clear All Overrides").clicked() {
+					for file in &mut self.media_files {
+						file.preset_override = None;
+					}
+				}
+			});
 		});
 	}
 
@@ -2940,8 +3063,9 @@ impl LoMuxApp {
 				}
 			}
 
+			let batch = self.active_preset().clone();
 			if self.media_files[idx].subtitle_mode == SubtitleMode::Soft
-				&& subtitle_codec_for(&self.active_preset().container).is_none()
+				&& subtitle_codec_for(&self.media_files[idx].effective_preset(&batch).container).is_none()
 			{
 				ui.colored_label(
 					egui::Color32::from_rgb(230, 150, 80),
@@ -3594,10 +3718,12 @@ fn download_youtube_video(
 	on_progress: &dyn Fn(f32),
 	cancel_flag: &Arc<Mutex<bool>>,
 ) -> Option<PathBuf> {
+	// Only used to make the temp filename unique. A clock set before 1970 would panic here,
+	// and the release profile aborts on panic, so degrade to 0 rather than kill the app.
 	let timestamp = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
-		.unwrap()
-		.as_secs();
+		.map(|d| d.as_secs())
+		.unwrap_or(0);
 
 	let output_template = temp_dir.join(format!("yt_{}_%(title).80s.%(ext)s", timestamp))
 		.to_string_lossy()
@@ -3643,7 +3769,7 @@ fn download_youtube_video(
 	let mut downloaded_file: Option<PathBuf> = None;
 	let temp_dir_str = temp_dir.to_string_lossy().to_string();
 
-	for line in reader.lines().flatten() {
+	for line in reader.lines().map_while(Result::ok) {
 		if *cancel_flag.lock().unwrap() {
 			kill_process(&child);
 			return None;
@@ -4132,6 +4258,8 @@ impl eframe::App for LoMuxApp {
 									ui.add_space(4.0);
 									self.show_presets_panel(ui);
 									ui.add_space(4.0);
+									self.show_preset_override_panel(ui);
+									ui.add_space(4.0);
 									self.show_metadata_panel(ui);
 									ui.add_space(4.0);
 									self.show_trim_panel(ui);
@@ -4265,6 +4393,8 @@ fn main() -> eframe::Result {
 mod tests {
 	use super::*;
 
+	// Mirrors EncodingPreset's field list; arity is the point.
+	#[allow(clippy::too_many_arguments)]
 	fn preset(
 		name: &str,
 		container: Container,
@@ -5283,5 +5413,357 @@ mod tests {
 			let out = truncate_path(&path, max);
 			assert!(!out.is_empty());
 		}
+	}
+
+	fn batch_h264() -> EncodingPreset {
+		preset(
+			"YouTube 1080p HD", Container::Mp4,
+			VideoCodec::H264, AudioCodec::Aac,
+			Some(8000), Some(320), None, None, Some("1920x1080"),
+		)
+	}
+
+	#[test]
+	fn effective_preset_falls_back_to_batch() {
+		let file = MediaFile::new(PathBuf::from("/in.mov"));
+		let batch = batch_h264();
+		assert_eq!(file.effective_preset(&batch).name, "YouTube 1080p HD");
+	}
+
+	#[test]
+	fn effective_preset_prefers_the_override() {
+		let mut file = MediaFile::new(PathBuf::from("/in.mov"));
+		file.preset_override = Some(preset(
+			"MP3 320", Container::Mp3,
+			VideoCodec::None, AudioCodec::Mp3,
+			None, Some(320), None, None, None,
+		));
+		let batch = batch_h264();
+		let effective = file.effective_preset(&batch);
+		assert_eq!(effective.name, "MP3 320");
+		assert_eq!(effective.container.extension(), "mp3");
+	}
+
+	#[test]
+	fn per_file_overrides_produce_different_outputs() {
+		let batch = batch_h264();
+
+		let plain = MediaFile::new(PathBuf::from("/clip.mov"));
+
+		let mut audio_only = MediaFile::new(PathBuf::from("/clip.mov"));
+		audio_only.preset_override = Some(preset(
+			"MP3 320", Container::Mp3,
+			VideoCodec::None, AudioCodec::Mp3,
+			None, Some(320), None, None, None,
+		));
+
+		let a = plain.effective_preset(&batch);
+		let b = audio_only.effective_preset(&batch);
+		assert_ne!(a.container.extension(), b.container.extension());
+
+		let input = PathBuf::from("/clip.mov");
+		let args_a = build_ffmpeg_args(
+			a, &input, &PathBuf::from("/out.mp4"),
+			&AudioMetadata::default(), &EncodeOptions::default(),
+		);
+		let args_b = build_ffmpeg_args(
+			b, &input, &PathBuf::from("/out.mp3"),
+			&AudioMetadata::default(), &EncodeOptions::default(),
+		);
+		assert!(args_a.windows(2).any(|w| w == ["-c:v", "libx264"]));
+		assert!(args_b.contains(&"-vn".to_string()), "audio override must drop video");
+		assert!(args_b.windows(2).any(|w| w == ["-c:a", "libmp3lame"]));
+	}
+
+	#[test]
+	fn override_is_a_snapshot_not_a_reference() {
+		let mut source = EncodingPreset::custom_default();
+		let mut file = MediaFile::new(PathBuf::from("/in.mov"));
+		file.preset_override = Some(source.clone());
+
+		source.container = Container::Wav;
+		source.video_bitrate = Some(99999);
+
+		let stored = file.preset_override.as_ref().unwrap();
+		assert_eq!(stored.container.extension(), "mp4");
+		assert_eq!(stored.video_bitrate, Some(5000));
+	}
+
+	#[test]
+	fn two_pass_follows_the_per_file_preset() {
+		let batch = preset(
+			"ProRes 422", Container::Mov,
+			VideoCodec::ProRes, AudioCodec::Pcm,
+			None, None, None, None, None,
+		);
+		assert!(!supports_two_pass(&batch));
+
+		let mut file = MediaFile::new(PathBuf::from("/in.mov"));
+		file.preset_override = Some(batch_h264());
+		assert!(
+			supports_two_pass(file.effective_preset(&batch)),
+			"a bitrate H.264 override must enable two-pass even on an intra-codec batch"
+		);
+	}
+
+	// Mirrors the per-file resolution in start_processing for a mixed queue, so the whole
+	// path — override -> preset -> output name -> arg vector — can be fed to real ffmpeg.
+	//   LOMUX_DUMP_INPUT=clip.mp4 LOMUX_DUMP_OUTDIR=/tmp/out \
+	//     cargo test --release dump_mixed_batch -- --ignored --nocapture
+	#[test]
+	#[ignore = "prints a mixed-preset queue for the ffmpeg smoke script"]
+	fn dump_mixed_batch() {
+		let input = PathBuf::from(std::env::var("LOMUX_DUMP_INPUT").unwrap_or_else(|_| "/in.mp4".into()));
+		let out_dir = std::env::var("LOMUX_DUMP_OUTDIR").unwrap_or_else(|_| "/tmp".into());
+
+		let all = EncodingPreset::get_all_presets();
+		let pick = |name: &str| {
+			all.iter().find(|p| p.name == name).unwrap_or_else(|| {
+				panic!(
+					"no built-in preset named {:?}. Available: {}",
+					name,
+					all.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+				)
+			}).clone()
+		};
+
+		let batch_preset = pick("YouTube 1080p HD");
+
+		let mut files = [
+			MediaFile::new(input.clone()),
+			MediaFile::new(input.clone()),
+			MediaFile::new(input.clone()),
+			MediaFile::new(input.clone()),
+		];
+		// file 0 rides the batch preset; the rest override, including one that also trims
+		files[1].preset_override = Some(pick("ProRes 422"));
+		files[2].preset_override = Some(pick("MP3 320kbps"));
+		files[3].preset_override = Some(pick("PNG Sequence"));
+		files[3].trim_start = "00:00:01".into();
+		files[3].trim_end = "00:00:03".into();
+
+		for (idx, file) in files.iter().enumerate() {
+			let preset = file.effective_preset(&batch_preset);
+			let stem = format!("mixed_{}_{}", idx, sanitize_filename(&preset.name).replace(' ', "_"));
+			let is_sequence = preset.container.is_image_sequence() && !preset.single_image;
+			let output = if is_sequence {
+				PathBuf::from(format!("{}/{}/{}_%05d.{}", out_dir, stem, stem, preset.container.extension()))
+			} else {
+				PathBuf::from(format!("{}/{}.{}", out_dir, stem, preset.container.extension()))
+			};
+			let options = EncodeOptions {
+				trim_start: some_if_set(&file.trim_start),
+				trim_end: some_if_set(&file.trim_end),
+				..Default::default()
+			};
+			let args = build_ffmpeg_args(preset, &file.path, &output, &AudioMetadata::default(), &options);
+			println!(
+				"MIXED\t{}\t{}\t{}\t{}",
+				idx,
+				preset.name,
+				if is_sequence { "seq" } else { "file" },
+				args.join("\t")
+			);
+		}
+	}
+
+	#[test]
+	fn audio_override_drops_burn_in_instead_of_confusing_ffmpeg() {
+		// A user sets burn-in subtitles, then overrides that file to an audio-only preset.
+		// Per-item presets made this pairing easy to reach, so pin the behaviour: no video
+		// encoder means no -vf subtitles, and ffmpeg must not be handed both -vn and a filter.
+		let batch = batch_h264();
+		let mut file = MediaFile::new(PathBuf::from("/clip.mov"));
+		file.subtitle_path = Some(PathBuf::from("/subs.srt"));
+		file.subtitle_mode = SubtitleMode::Burn;
+		file.preset_override = Some(preset(
+			"MP3 320", Container::Mp3,
+			VideoCodec::None, AudioCodec::Mp3,
+			None, Some(320), None, None, None,
+		));
+
+		let options = EncodeOptions {
+			subtitle_path: file.subtitle_path.clone(),
+			subtitle_mode: SubtitleMode::Burn,
+			..Default::default()
+		};
+		let args = build_ffmpeg_args(
+			file.effective_preset(&batch),
+			&PathBuf::from("/clip.mov"),
+			&PathBuf::from("/out.mp3"),
+			&AudioMetadata::default(),
+			&options,
+		);
+
+		assert!(args.contains(&"-vn".to_string()));
+		assert!(
+			!args.iter().any(|a| a.contains("subtitles=")),
+			"burn-in must not survive an override to a codec-less preset: {:?}",
+			args
+		);
+	}
+
+	#[test]
+	fn soft_subs_dropped_when_override_container_cannot_carry_them() {
+		let batch = batch_h264();
+		let mut file = MediaFile::new(PathBuf::from("/clip.mov"));
+		file.preset_override = Some(preset(
+			"FLAC Lossless", Container::Flac,
+			VideoCodec::None, AudioCodec::Flac,
+			None, None, None, None, None,
+		));
+
+		let effective = file.effective_preset(&batch);
+		assert!(subtitle_codec_for(&effective.container).is_none());
+
+		let options = EncodeOptions {
+			subtitle_path: Some(PathBuf::from("/subs.srt")),
+			subtitle_mode: SubtitleMode::Soft,
+			..Default::default()
+		};
+		let args = build_ffmpeg_args(
+			effective,
+			&PathBuf::from("/clip.mov"),
+			&PathBuf::from("/out.flac"),
+			&AudioMetadata::default(),
+			&options,
+		);
+		assert!(!args.iter().any(|a| a == "-c:s"), "{:?}", args);
+	}
+
+	#[test]
+	fn trim_survives_a_preset_override() {
+		// Trim lives on MediaFile and the preset lives beside it; overriding one must not
+		// quietly discard the other.
+		let batch = batch_h264();
+		let mut file = MediaFile::new(PathBuf::from("/clip.mov"));
+		file.trim_start = "00:00:05".into();
+		file.trim_end = "00:00:10".into();
+		file.preset_override = Some(preset(
+			"MP3 320", Container::Mp3,
+			VideoCodec::None, AudioCodec::Mp3,
+			None, Some(320), None, None, None,
+		));
+
+		let options = EncodeOptions {
+			trim_start: some_if_set(&file.trim_start),
+			trim_end: some_if_set(&file.trim_end),
+			..Default::default()
+		};
+		let args = build_ffmpeg_args(
+			file.effective_preset(&batch),
+			&PathBuf::from("/clip.mov"),
+			&PathBuf::from("/out.mp3"),
+			&AudioMetadata::default(),
+			&options,
+		);
+		assert!(args.windows(2).any(|w| w[0] == "-ss"), "{:?}", args);
+		assert!(args.windows(2).any(|w| w[0] == "-t"), "{:?}", args);
+	}
+
+	#[test]
+	fn override_to_a_sequence_preset_flips_the_sequence_branch() {
+		// The worker decides "write into a folder" from the per-file preset now.
+		let batch = batch_h264();
+		assert!(!batch.container.is_image_sequence());
+
+		let mut file = MediaFile::new(PathBuf::from("/clip.mov"));
+		let mut seq = preset(
+			"PNG Sequence", Container::Png,
+			VideoCodec::None, AudioCodec::None,
+			None, None, None, None, None,
+		);
+		seq.single_image = false;
+		file.preset_override = Some(seq);
+
+		let effective = file.effective_preset(&batch);
+		assert!(effective.container.is_image_sequence() && !effective.single_image);
+	}
+
+	#[test]
+	fn a_mixed_queue_resolves_three_different_presets() {
+		let batch = batch_h264();
+		let mut files = [
+			MediaFile::new(PathBuf::from("/a.mov")),
+			MediaFile::new(PathBuf::from("/b.mov")),
+			MediaFile::new(PathBuf::from("/c.mov")),
+		];
+		files[1].preset_override = Some(preset(
+			"ProRes 422", Container::Mov,
+			VideoCodec::ProRes, AudioCodec::Pcm,
+			None, None, None, None, None,
+		));
+		files[2].preset_override = Some(preset(
+			"MP3 320", Container::Mp3,
+			VideoCodec::None, AudioCodec::Mp3,
+			None, Some(320), None, None, None,
+		));
+
+		let exts: Vec<&str> = files.iter()
+			.map(|f| f.effective_preset(&batch).container.extension())
+			.collect();
+		assert_eq!(exts, vec!["mp4", "mov", "mp3"]);
+	}
+
+	#[test]
+	fn clearing_an_override_returns_the_file_to_the_batch_preset() {
+		let batch = batch_h264();
+		let mut file = MediaFile::new(PathBuf::from("/clip.mov"));
+		file.preset_override = Some(preset(
+			"MP3 320", Container::Mp3,
+			VideoCodec::None, AudioCodec::Mp3,
+			None, Some(320), None, None, None,
+		));
+		assert_eq!(file.effective_preset(&batch).container.extension(), "mp3");
+
+		file.preset_override = None;
+		assert_eq!(file.effective_preset(&batch).container.extension(), "mp4");
+	}
+
+	#[test]
+	fn removing_a_queue_row_keeps_overrides_with_their_own_files() {
+		// The queue row badge reads from the file, so a removal above an overridden file
+		// must not shift the override onto a neighbour.
+		let mut files = vec![
+			MediaFile::new(PathBuf::from("/a.mov")),
+			MediaFile::new(PathBuf::from("/b.mov")),
+			MediaFile::new(PathBuf::from("/c.mov")),
+		];
+		files[2].preset_override = Some(preset(
+			"MP3 320", Container::Mp3,
+			VideoCodec::None, AudioCodec::Mp3,
+			None, Some(320), None, None, None,
+		));
+
+		files.remove(0);
+
+		assert!(files[0].preset_override.is_none(), "b.mov must stay un-overridden");
+		assert_eq!(
+			files[1].preset_override.as_ref().map(|p| p.name.as_str()),
+			Some("MP3 320"),
+			"the override must travel with c.mov"
+		);
+	}
+
+	#[test]
+	fn filename_template_preset_token_uses_the_override() {
+		let batch = batch_h264();
+		let mut file = MediaFile::new(PathBuf::from("/clip.mov"));
+		file.preset_override = Some(preset(
+			"MP3 320", Container::Mp3,
+			VideoCodec::None, AudioCodec::Mp3,
+			None, Some(320), None, None, None,
+		));
+
+		let effective = file.effective_preset(&batch);
+		let stem = apply_filename_template(
+			"{preset}-{name}",
+			"clip",
+			&AudioMetadata::default(),
+			&effective.name,
+			effective.container.extension(),
+			0,
+		);
+		assert_eq!(stem, "MP3 320-clip");
 	}
 }

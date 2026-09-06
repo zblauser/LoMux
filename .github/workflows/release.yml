@@ -159,46 +159,53 @@ jobs:
             - [yt-dlp](https://github.com/yt-dlp/yt-dlp) (optional, for YouTube downloads)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  update-homebrew:
-    name: Update Homebrew Formula
+  # The Homebrew formula is not pushed from here. zblauser/homebrew-tap bumps its
+  # own formulas on a schedule (and on demand) using its own GITHUB_TOKEN, so no
+  # cross-repo personal access token has to exist. After this release finishes, run
+  # https://github.com/zblauser/homebrew-tap/actions/workflows/bump-formulas.yml
+  # to update the tap immediately instead of waiting for the daily run.
+
+  packaging-checksums:
+    name: PKGBUILD checksum
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Update formula
+      - uses: actions/checkout@v4
+      - name: Stamp the real tarball checksum into PKGBUILD
+        run: |
+          set -euo pipefail
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          TARBALL_URL="https://github.com/zblauser/LoMux/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
+
+          # The AUR package is published by hand, so catch a forgotten version bump here
+          # rather than after users hit a 404 on the source URL.
+          PKGVER=$(grep -m1 '^pkgver=' packaging/PKGBUILD | cut -d= -f2)
+          if [ "$PKGVER" != "$VERSION" ]; then
+            echo "::error::packaging/PKGBUILD says pkgver=${PKGVER} but the tag is ${VERSION}."
+            echo "::error::Bump pkgver, commit, and re-tag."
+            exit 1
+          fi
+
+          curl -fsSL "$TARBALL_URL" -o source.tar.gz
+          SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
+          echo "PKGBUILD sha256: ${SHA256}"
+
+          # SKIP means no integrity check at all; replace it with the real digest.
+          # Write-and-move rather than sed -i, which takes a mandatory argument on BSD sed
+          # and none on GNU — this form behaves the same wherever it runs.
+          sed "s|^sha256sums=(.*)|sha256sums=('${SHA256}')|" packaging/PKGBUILD > PKGBUILD.stamped
+          mv PKGBUILD.stamped packaging/PKGBUILD
+          grep '^sha256sums=' packaging/PKGBUILD
+
+          if grep -q "SKIP" packaging/PKGBUILD; then
+            echo "::error::sha256sums still contains SKIP — the substitution did not apply."
+            exit 1
+          fi
+      - name: Attach the stamped PKGBUILD to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: packaging/PKGBUILD
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          TARBALL_URL="https://github.com/zblauser/LoMux/archive/${GITHUB_REF_NAME}.tar.gz"
-          # Download the source tarball and compute sha256
-          curl -sL "$TARBALL_URL" -o source.tar.gz
-          SHA256=$(sha256sum source.tar.gz | cut -d' ' -f1)
-          echo "Version: $VERSION"
-          echo "SHA256: $SHA256"
-          # Clone the tap repo
-          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/zblauser/homebrew-tap.git" tap
-          cd tap
-          mkdir -p Formula
-          cat > Formula/lomux.rb << FORMULA
-          class Lomux < Formula
-            desc "Lightweight media converter with FFmpeg and yt-dlp integration"
-            homepage "https://github.com/zblauser/LoMux"
-            url "https://github.com/zblauser/LoMux/archive/v${VERSION}.tar.gz"
-            sha256 "${SHA256}"
-            license "GPL-3.0-only"
-            depends_on "rust" => :build
-            depends_on "ffmpeg"
-            def install
-              system "cargo", "install", "--locked", "--root", prefix, "--path", "."
-            end
-            test do
-              assert_match "LoMux", shell_output("#{bin}/lomux --help 2>&1", 1)
-            end
-          end
-          FORMULA
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/lomux.rb
-          git commit -m "Update lomux to ${VERSION}" || echo "No changes"
-          git push || echo "Push failed — create the homebrew-tap repo first"
-
