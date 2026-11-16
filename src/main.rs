@@ -12,6 +12,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const DOWNLOAD_PHASE_SHARE: f32 = 0.5;
 
+const YTDLP_STALE_DAYS: i64 = 60;
+
 const LOUDNORM_FILTER: &str = "loudnorm=I=-16:TP=-1.5:LRA=11";
 
 const CUSTOM_THEME: &str = "Custom";
@@ -1242,6 +1244,13 @@ impl SubtitleMode {
 	}
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+enum Av1Encoder {
+	#[default]
+	Libaom,
+	SvtAv1,
+}
+
 #[derive(Debug, Clone, Default)]
 struct EncodeOptions {
 	extra_args: String,
@@ -1252,6 +1261,13 @@ struct EncodeOptions {
 	pass_log: Option<String>,
 	subtitle_path: Option<PathBuf>,
 	subtitle_mode: SubtitleMode,
+	av1_encoder: Av1Encoder,
+}
+
+fn needs_av1_encoder(preset: &EncodingPreset) -> bool {
+	preset.video_codec == VideoCodec::Av1
+		&& !preset.container.is_image_sequence()
+		&& preset.container != Container::Gif
 }
 
 fn supports_two_pass(preset: &EncodingPreset) -> bool {
@@ -1385,6 +1401,7 @@ struct ToolDetector {
 	ffprobe_path: Option<PathBuf>,
 	ytdlp_path: Option<PathBuf>,
 	supports_burn_in: bool,
+	av1_encoder: Option<Av1Encoder>,
 }
 
 impl ToolDetector {
@@ -1394,6 +1411,7 @@ impl ToolDetector {
 			ffprobe_path: None,
 			ytdlp_path: None,
 			supports_burn_in: false,
+			av1_encoder: None,
 		};
 		detector.detect_all();
 		detector
@@ -1402,12 +1420,38 @@ impl ToolDetector {
 	fn detect_all(&mut self) {
 		self.ffmpeg_path = Self::find_tool("ffmpeg");
 		self.ffprobe_path = Self::find_tool("ffprobe");
-		self.ytdlp_path = Self::find_tool("yt-dlp")
+		self.ytdlp_path = Self::find_newest("yt-dlp")
 			.or_else(|| Self::find_tool("youtube-dl"));
 		self.supports_burn_in = self.ffmpeg_path
 			.as_ref()
 			.map(|p| Self::has_subtitles_filter(p))
 			.unwrap_or(false);
+		self.av1_encoder = self.ffmpeg_path
+			.as_ref()
+			.and_then(|p| Self::detect_av1_encoder(p));
+	}
+
+	fn find_newest(tool_name: &str) -> Option<PathBuf> {
+		let mut candidates: Vec<PathBuf> = which::which_all(tool_name)
+			.map(|found| found.collect())
+			.unwrap_or_default();
+		candidates.extend(Self::get_search_paths(tool_name).into_iter().filter(|p| p.exists()));
+		#[cfg(target_os = "macos")]
+		if let Some(prefix) = Self::brew_prefix() {
+			let brew_path = PathBuf::from(format!("{}/bin/{}", prefix, tool_name));
+			if brew_path.exists() {
+				candidates.push(brew_path);
+			}
+		}
+		newest_tool(candidates)
+	}
+
+	fn detect_av1_encoder(ffmpeg: &Path) -> Option<Av1Encoder> {
+		let out = Command::new(ffmpeg)
+			.args(["-hide_banner", "-encoders"])
+			.output()
+			.ok()?;
+		pick_av1_encoder(&String::from_utf8_lossy(&out.stdout))
 	}
 
 	fn has_subtitles_filter(ffmpeg: &Path) -> bool {
@@ -1894,6 +1938,17 @@ impl LoMuxApp {
 			None => (AppTheme::studio_dark(), default_custom_theme()),
 		};
 
+		let tools = ToolDetector::new();
+		let console_output = Arc::new(Mutex::new(String::new()));
+		if let Some(ytdlp) = tools.ytdlp_path.clone() {
+			let console = console_output.clone();
+			thread::spawn(move || {
+				if let Some(warning) = ytdlp_staleness(&ytdlp) {
+					console.lock().unwrap().push_str(&format!("⚠ {}", warning));
+				}
+			});
+		}
+
 		Self {
 			media_files: Vec::new(),
 			output_dir: None,
@@ -1907,14 +1962,14 @@ impl LoMuxApp {
 			youtube_url_input: String::new(),
 			youtube_format: YtFormat::BestVideo,
 			temp_download_dir: temp_dir,
-			console_output: Arc::new(Mutex::new(String::new())),
+			console_output,
 			is_processing: Arc::new(Mutex::new(false)),
 			cancel_flag: Arc::new(Mutex::new(false)),
 			progress: Arc::new(Mutex::new(0.0)),
 			status: Arc::new(Mutex::new("Ready".to_string())),
 			current_child: Arc::new(Mutex::new(None)),
 			download_states: Arc::new(Mutex::new(Vec::new())),
-			tools: ToolDetector::new(),
+			tools,
 			theme: loaded_theme,
 			custom_theme: loaded_custom,
 			theme_editor_open: false,
@@ -2038,6 +2093,7 @@ impl LoMuxApp {
 		let normalize_audio = self.normalize_audio;
 		let two_pass = self.two_pass;
 		let supports_burn_in = self.tools.supports_burn_in;
+		let av1_encoder = self.tools.av1_encoder;
 		let filename_template = self.filename_template.clone();
 
 		thread::spawn(move || {
@@ -2055,6 +2111,15 @@ impl LoMuxApp {
 
 				let current = idx + 1;
 				let preset = file.effective_preset(&batch_preset).clone();
+
+				if needs_av1_encoder(&preset) && av1_encoder.is_none() {
+					console.lock().unwrap().push_str(&format!(
+						"❌ This ffmpeg has no AV1 encoder (libaom or SVT-AV1), skipping {}\n",
+						file.display_name()
+					));
+					failed += 1;
+					continue;
+				}
 
 				if file.is_youtube {
 					if let Some(ref ytdlp_path) = ytdlp {
@@ -2169,6 +2234,7 @@ impl LoMuxApp {
 					} else {
 						file.subtitle_mode.clone()
 					},
+					av1_encoder: av1_encoder.unwrap_or_default(),
 				};
 
 				let duration = trimmed_duration(duration, &options);
@@ -2244,7 +2310,7 @@ impl LoMuxApp {
 									*progress.lock().unwrap() = total_progress;
 								}
 							}
-						} else if line.starts_with("frame=") || line.starts_with("size=") || line.starts_with("speed=") {
+						} else if line.starts_with("frame=") || line.starts_with("size=") || line.starts_with("speed=") || line.starts_with("Svt[info]") {
 							// progress lines — skip console noise
 						} else if !line.trim().is_empty() && !FFMPEG_PROGRESS_KEYS.iter().any(|k| line.starts_with(k)) {
 							let mut out = console.lock().unwrap();
@@ -2787,11 +2853,14 @@ impl LoMuxApp {
 				.selected_text(self.custom_preset.video_codec.label())
 				.show_ui(ui, |ui| {
 					for c in VideoCodec::all() {
-						ui.selectable_value(
-							&mut self.custom_preset.video_codec,
-							c.clone(),
-							c.label(),
-						);
+						let enabled = *c != VideoCodec::Av1 || self.tools.av1_encoder.is_some();
+						ui.add_enabled_ui(enabled, |ui| {
+							ui.selectable_value(
+								&mut self.custom_preset.video_codec,
+								c.clone(),
+								c.label(),
+							);
+						});
 					}
 				});
 		});
@@ -3261,6 +3330,13 @@ impl LoMuxApp {
 							.color(self.theme.text_secondary)
 					);
 				}
+				if self.tools.av1_encoder.is_none() {
+					ui.label(
+						egui::RichText::new("AV1 unavailable — ffmpeg has no libaom or SVT-AV1 encoder")
+							.small()
+							.color(self.theme.text_secondary)
+					);
+				}
 
 				ui.add_space(8.0);
 				ui.label(egui::RichText::new("MIT licensed · github.com/zblauser/LoMux").small().weak());
@@ -3407,6 +3483,77 @@ impl LoMuxApp {
 
 // ============= HELPER FUNCTIONS =============
 
+fn newest_tool(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+	let mut unique: Vec<(PathBuf, PathBuf)> = Vec::new();
+	for path in candidates {
+		let real = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+		if !unique.iter().any(|(_, seen)| *seen == real) {
+			unique.push((path, real));
+		}
+	}
+	if unique.len() <= 1 {
+		return unique.pop().map(|(path, _)| path);
+	}
+	let probes: Vec<_> = unique
+		.into_iter()
+		.map(|(path, _)| thread::spawn(move || {
+			let version = Command::new(&path)
+				.arg("--version")
+				.output()
+				.ok()
+				.filter(|out| out.status.success())
+				.and_then(|out| parse_version(&String::from_utf8_lossy(&out.stdout)));
+			(path, version)
+		}))
+		.collect();
+	pick_newest(probes.into_iter().filter_map(|probe| probe.join().ok()).collect())
+}
+
+fn parse_version(text: &str) -> Option<Vec<u64>> {
+	let parts: Vec<u64> = text
+		.split_whitespace()
+		.next()?
+		.split('.')
+		.map_while(|part| part.parse().ok())
+		.collect();
+	if parts.is_empty() { None } else { Some(parts) }
+}
+
+fn pick_newest(versions: Vec<(PathBuf, Option<Vec<u64>>)>) -> Option<PathBuf> {
+	let fallback = versions.first()?.0.clone();
+	let mut best: Option<(PathBuf, Vec<u64>)> = None;
+	for (path, version) in versions {
+		if let Some(version) = version {
+			if best.as_ref().is_none_or(|(_, top)| version > *top) {
+				best = Some((path, version));
+			}
+		}
+	}
+	Some(best.map(|(path, _)| path).unwrap_or(fallback))
+}
+
+fn pick_av1_encoder(listing: &str) -> Option<Av1Encoder> {
+	let has = |name: &str| listing.lines().any(|line| line.split_whitespace().nth(1) == Some(name));
+	if has("libaom-av1") {
+		Some(Av1Encoder::Libaom)
+	} else if has("libsvtav1") {
+		Some(Av1Encoder::SvtAv1)
+	} else {
+		None
+	}
+}
+
+fn scale_filter(resolution: &str, scale_options: &str) -> String {
+	let spec = resolution.replace("x", ":");
+	let is_size = |dim: &str| dim.parse::<u32>().is_ok_and(|n| n > 0);
+	match spec.split_once(':') {
+		Some((w, h)) if is_size(w) && is_size(h) => format!(
+			"scale=iw*sar:ih,scale={w}:{h}:force_original_aspect_ratio=decrease{scale_options},pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+		),
+		_ => format!("scale={spec}{scale_options}"),
+	}
+}
+
 fn build_ffmpeg_args(
 	preset: &EncodingPreset,
 	input: &Path,
@@ -3455,7 +3602,7 @@ fn build_ffmpeg_args(
 		}
 		if let Some(ref resolution) = preset.resolution {
 			if resolution.contains("x") || resolution.contains(":") {
-				filters.push(format!("scale={}", resolution.replace("x", ":")));
+				filters.push(scale_filter(resolution, ""));
 			}
 		}
 		if !filters.is_empty() {
@@ -3475,7 +3622,7 @@ fn build_ffmpeg_args(
 	} else if preset.container == Container::Gif {
 		let fps = preset.fps.unwrap_or(15);
 		let scale = preset.resolution.as_ref()
-			.map(|r| format!(",scale={}:flags=lanczos", r.replace("x", ":")))
+			.map(|r| format!(",{}", scale_filter(r, ":flags=lanczos")))
 			.unwrap_or_default();
 		args.extend([
 			"-filter_complex".into(),
@@ -3524,8 +3671,16 @@ fn build_ffmpeg_args(
 				}
 			}
 			VideoCodec::Av1 => {
-				args.extend(["-c:v".into(), "libaom-av1".into()]);
-				args.extend(["-cpu-used".into(), "4".into()]);
+				match options.av1_encoder {
+					Av1Encoder::Libaom => {
+						args.extend(["-c:v".into(), "libaom-av1".into()]);
+						args.extend(["-cpu-used".into(), "4".into()]);
+					}
+					Av1Encoder::SvtAv1 => {
+						args.extend(["-c:v".into(), "libsvtav1".into()]);
+						args.extend(["-preset".into(), "8".into()]);
+					}
+				}
 				if let Some(crf) = preset.video_crf {
 					args.extend(["-crf".into(), crf.to_string()]);
 				}
@@ -3629,7 +3784,7 @@ fn build_ffmpeg_args(
 			let mut filters = Vec::new();
 			if let Some(ref resolution) = preset.resolution {
 				if resolution.contains("x") || resolution.contains(":") {
-					filters.push(format!("scale={}", resolution.replace("x", ":")));
+					filters.push(scale_filter(resolution, ""));
 				}
 			}
 			if options.subtitle_mode == SubtitleMode::Burn {
@@ -3764,6 +3919,18 @@ fn download_youtube_video(
 		.spawn()
 		.ok()?;
 
+	let stderr = child.stderr.take()?;
+	let stderr_console = console.clone();
+	let stderr_reader = thread::spawn(move || {
+		for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+			if !line.trim().is_empty() {
+				let mut out = stderr_console.lock().unwrap();
+				out.push_str(&line);
+				out.push('\n');
+			}
+		}
+	});
+
 	let stdout = child.stdout.take()?;
 	let reader = BufReader::new(stdout);
 	let mut downloaded_file: Option<PathBuf> = None;
@@ -3792,6 +3959,7 @@ fn download_youtube_video(
 	}
 
 	let status = child.wait().ok()?;
+	let _ = stderr_reader.join();
 	if status.success() {
 		if downloaded_file.is_none() {
 			if let Ok(entries) = std::fs::read_dir(temp_dir) {
@@ -3810,8 +3978,60 @@ fn download_youtube_video(
 		}
 		downloaded_file
 	} else {
-		console.lock().unwrap().push_str("❌ Download failed\n");
+		let advice = ytdlp_staleness(ytdlp)
+			.unwrap_or_else(|| "If this keeps happening, update yt-dlp.\n".to_string());
+		console.lock().unwrap().push_str(&format!(
+			"❌ Download failed using {}. {}",
+			ytdlp.display(),
+			advice
+		));
 		None
+	}
+}
+
+fn ytdlp_staleness(ytdlp: &Path) -> Option<String> {
+	let out = Command::new(ytdlp).arg("--version").output().ok()?;
+	let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+	let today = std::time::SystemTime::now()
+		.duration_since(std::time::UNIX_EPOCH)
+		.ok()?
+		.as_secs() as i64 / 86_400;
+	let age = ytdlp_age_days(&version, today)?;
+	(age >= YTDLP_STALE_DAYS).then(|| format!(
+		"yt-dlp {} is {} days old and YouTube rejects old builds. Update it: {}\n",
+		version, age, ytdlp_update_hint(ytdlp)
+	))
+}
+
+fn ytdlp_age_days(version: &str, today: i64) -> Option<i64> {
+	let parts = parse_version(version)?;
+	let [y, m, d] = [*parts.first()?, *parts.get(1)?, *parts.get(2)?].map(|n| n as i64);
+	if !(2000..=9999).contains(&y) || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+		return None;
+	}
+	Some((today - days_from_civil(y, m, d)).max(0))
+}
+
+fn days_from_civil(year: i64, m: i64, d: i64) -> i64 {
+	let y = if m <= 2 { year - 1 } else { year };
+	let era = y.div_euclid(400);
+	let yoe = y - era * 400;
+	let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+	let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	era * 146_097 + doe - 719_468
+}
+
+fn ytdlp_update_hint(ytdlp: &Path) -> &'static str {
+	let real = std::fs::canonicalize(ytdlp).unwrap_or_else(|_| ytdlp.to_path_buf());
+	let shown = real.to_string_lossy();
+	if shown.contains("/Cellar/") || shown.contains("/homebrew/") || shown.contains("/linuxbrew/") {
+		"brew upgrade yt-dlp"
+	} else if shown.starts_with("/usr/bin/") {
+		"your package manager"
+	} else if std::fs::read(&real).is_ok_and(|bytes| bytes.len() < 4096 && bytes.windows(6).any(|w| w == b"yt_dlp")) {
+		"pip install -U yt-dlp"
+	} else {
+		"yt-dlp -U"
 	}
 }
 
@@ -4447,7 +4667,7 @@ mod tests {
 			"-pix_fmt", "yuv420p",
 			"-movflags", "+faststart",
 			"-c:a", "aac", "-b:a", "320k",
-			"-vf", "scale=1920:1080",
+			"-vf", "scale=iw*sar:ih,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1",
 			"-threads", "0",
 			"-y", "/out.mp4",
 		]);
@@ -4464,7 +4684,7 @@ mod tests {
 		let args = build_ffmpeg_args(&p, &i, &o, &AudioMetadata::default(), &EncodeOptions::default());
 		assert!(args.windows(2).any(|w| w == ["-c:v", "libx265"]));
 		assert!(args.windows(2).any(|w| w == ["-tag:v", "hvc1"]));
-		assert!(args.windows(2).any(|w| w == ["-vf", "scale=3840:2160"]));
+		assert!(args.windows(2).any(|w| w == ["-vf", "scale=iw*sar:ih,scale=3840:2160:force_original_aspect_ratio=decrease,pad=3840:2160:(ow-iw)/2:(oh-ih)/2,setsar=1"]));
 	}
 
 	#[test]
@@ -4505,7 +4725,7 @@ mod tests {
 		);
 		let (i, o) = in_out();
 		let args = build_ffmpeg_args(&p, &i, &o, &AudioMetadata::default(), &EncodeOptions::default());
-		assert!(args.windows(2).any(|w| w == ["-vf", "scale=1280:720"]));
+		assert!(args.windows(2).any(|w| w == ["-vf", "scale=iw*sar:ih,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1"]));
 		assert!(args.windows(2).any(|w| w == ["-r", "30"]));
 		assert!(args.windows(2).any(|w| w == ["-b:v", "2500k"]));
 	}
@@ -4740,7 +4960,7 @@ mod tests {
 			.position(|a| a == "-vf")
 			.map(|idx| args[idx + 1].clone())
 			.expect("no -vf");
-		assert_eq!(filter, "scale=1280:720,subtitles='/subs/show.srt'");
+		assert_eq!(filter, "scale=iw*sar:ih,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,subtitles='/subs/show.srt'");
 		assert_eq!(args.iter().filter(|a| *a == "-vf").count(), 1, "only one -vf may be emitted");
 		assert_eq!(args.iter().filter(|a| *a == "-i").count(), 1, "burn-in must not add an input");
 	}
@@ -5171,7 +5391,7 @@ mod tests {
 			.position(|a| a == "-vf")
 			.map(|idx| args[idx + 1].clone())
 			.expect("no -vf");
-		assert_eq!(filter, "fps=24,scale=1280:720");
+		assert_eq!(filter, "fps=24,scale=iw*sar:ih,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1");
 	}
 
 	#[test]
@@ -5765,5 +5985,246 @@ mod tests {
 			0,
 		);
 		assert_eq!(stem, "MP3 320-clip");
+	}
+
+	#[test]
+	fn fixed_frame_keeps_source_shape_with_padding() {
+		assert_eq!(scale_filter("1080x1920", ""), "scale=iw*sar:ih,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1");
+		assert_eq!(scale_filter("1080:1920", ""), "scale=iw*sar:ih,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1");
+	}
+
+	#[test]
+	fn open_dimension_scale_gets_no_padding() {
+		assert_eq!(scale_filter("640:-1", ""), "scale=640:-1");
+		assert_eq!(scale_filter("-2:720", ""), "scale=-2:720");
+		assert_eq!(scale_filter("480:-1", ":flags=lanczos"), "scale=480:-1:flags=lanczos");
+	}
+
+	#[test]
+	fn gif_with_fixed_frame_keeps_lanczos_and_pads() {
+		let p = preset(
+			"Fixed GIF", Container::Gif,
+			VideoCodec::None, AudioCodec::None,
+			None, None, None, Some(15), Some("640x480"),
+		);
+		let (i, o) = in_out();
+		let args = build_ffmpeg_args(&p, &i, &o, &AudioMetadata::default(), &EncodeOptions::default());
+		let filter = args.iter()
+			.position(|a| a == "-filter_complex")
+			.map(|idx| args[idx + 1].clone())
+			.expect("no -filter_complex");
+		assert!(filter.contains("force_original_aspect_ratio=decrease:flags=lanczos,pad=640:480"));
+	}
+
+	#[test]
+	fn every_builtin_fixed_frame_preset_pads() {
+		for p in EncodingPreset::get_all_presets() {
+			let Some(ref resolution) = p.resolution else { continue };
+			if resolution.contains("-") || p.video_codec == VideoCodec::Copy || p.video_codec == VideoCodec::None {
+				continue;
+			}
+			let (i, o) = in_out();
+			let args = build_ffmpeg_args(&p, &i, &o, &AudioMetadata::default(), &EncodeOptions::default());
+			let filter = args.iter()
+				.position(|a| a == "-vf")
+				.map(|idx| args[idx + 1].clone())
+				.unwrap_or_else(|| panic!("{} has no -vf", p.name));
+			assert!(filter.contains(",pad="), "{} would squeeze the source: {}", p.name, filter);
+		}
+	}
+
+	#[test]
+	fn av1_encoder_picked_from_ffmpeg_listing() {
+		let aom = " V....D libaom-av1           libaom AV1 (codec av1)\n";
+		let svt = " V..... libsvtav1            SVT-AV1 (codec av1)\n";
+		let other = " ------\n V....D libx264              libx264 (codec h264)\n V....D libaom-av1x fake\n";
+		assert_eq!(pick_av1_encoder(aom), Some(Av1Encoder::Libaom));
+		assert_eq!(pick_av1_encoder(svt), Some(Av1Encoder::SvtAv1));
+		assert_eq!(pick_av1_encoder(&format!("{svt}{aom}")), Some(Av1Encoder::Libaom));
+		assert_eq!(pick_av1_encoder(other), None);
+	}
+
+	#[test]
+	fn av1_args_match_the_detected_encoder() {
+		let p = preset(
+			"AV1", Container::Mkv,
+			VideoCodec::Av1, AudioCodec::Opus,
+			None, Some(128), Some(30), None, None,
+		);
+		let (i, o) = in_out();
+		let aom = build_ffmpeg_args(&p, &i, &o, &AudioMetadata::default(), &EncodeOptions::default());
+		assert!(aom.windows(2).any(|w| w == ["-c:v", "libaom-av1"]));
+		assert!(aom.windows(2).any(|w| w == ["-cpu-used", "4"]));
+		assert!(aom.windows(2).any(|w| w == ["-crf", "30"]));
+
+		let svt = build_ffmpeg_args(&p, &i, &o, &AudioMetadata::default(), &EncodeOptions {
+			av1_encoder: Av1Encoder::SvtAv1,
+			..Default::default()
+		});
+		assert!(svt.windows(2).any(|w| w == ["-c:v", "libsvtav1"]));
+		assert!(svt.windows(2).any(|w| w == ["-preset", "8"]));
+		assert!(svt.windows(2).any(|w| w == ["-crf", "30"]));
+		assert!(!svt.iter().any(|a| a == "-cpu-used"));
+	}
+
+	#[test]
+	fn only_real_av1_encodes_need_an_encoder() {
+		let mk = |container, codec| preset("x", container, codec, AudioCodec::None, None, None, None, None, None);
+		assert!(needs_av1_encoder(&mk(Container::Mkv, VideoCodec::Av1)));
+		assert!(!needs_av1_encoder(&mk(Container::Mkv, VideoCodec::H264)));
+		assert!(!needs_av1_encoder(&mk(Container::Gif, VideoCodec::Av1)));
+		assert!(!needs_av1_encoder(&mk(Container::Png, VideoCodec::Av1)));
+	}
+
+	#[test]
+	fn tool_versions_parse_from_first_word() {
+		assert_eq!(parse_version("2026.10.26\n"), Some(vec![2026, 10, 26]));
+		assert_eq!(parse_version("2026.08.18.122307"), Some(vec![2026, 8, 18, 122307]));
+		assert_eq!(parse_version("2026.8.18.122307.dev0"), Some(vec![2026, 8, 18, 122307]));
+		assert_eq!(parse_version("not a version"), None);
+		assert_eq!(parse_version(""), None);
+	}
+
+	#[test]
+	fn newest_tool_version_wins_regardless_of_path_order() {
+		let old = PathBuf::from("/py/bin/yt-dlp");
+		let new = PathBuf::from("/usr/local/bin/yt-dlp");
+		assert_eq!(
+			pick_newest(vec![
+				(old.clone(), parse_version("2026.08.18.122307")),
+				(new.clone(), parse_version("2026.10.26")),
+			]),
+			Some(new.clone()),
+		);
+		assert_eq!(
+			pick_newest(vec![(old.clone(), None), (new.clone(), parse_version("2026.10.26"))]),
+			Some(new.clone()),
+			"a copy that can't report a version loses to one that can",
+		);
+		assert_eq!(
+			pick_newest(vec![(old.clone(), parse_version("2026.10.26")), (new.clone(), parse_version("2026.10.26"))]),
+			Some(old.clone()),
+			"ties keep PATH order",
+		);
+		assert_eq!(pick_newest(vec![(old.clone(), None), (new, None)]), Some(old), "nothing parses: PATH order");
+		assert_eq!(pick_newest(vec![]), None);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn newest_tool_probes_real_copies_and_skips_duplicates() {
+		use std::os::unix::fs::PermissionsExt;
+
+		let dir = std::env::temp_dir().join(format!("lomux_newest_{}", std::process::id()));
+		let (old_dir, new_dir) = (dir.join("old"), dir.join("new"));
+		std::fs::create_dir_all(&old_dir).unwrap();
+		std::fs::create_dir_all(&new_dir).unwrap();
+		let fake = |path: &Path, version: &str| {
+			std::fs::write(path, format!("#!/bin/sh\necho {}\n", version)).unwrap();
+			std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+		};
+		let old = old_dir.join("yt-dlp");
+		let new = new_dir.join("yt-dlp");
+		fake(&old, "2026.08.18.122307");
+		fake(&new, "2026.10.26");
+		let link = dir.join("yt-dlp-link");
+		let _ = std::fs::remove_file(&link);
+		std::os::unix::fs::symlink(&old, &link).unwrap();
+
+		assert_eq!(newest_tool(vec![old.clone(), link.clone(), new.clone()]), Some(new));
+		assert_eq!(newest_tool(vec![old.clone(), link]), Some(old), "a symlink to the same copy is one candidate");
+		assert_eq!(newest_tool(vec![]), None);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn ytdlp_stderr_is_drained_and_reported() {
+		use std::os::unix::fs::PermissionsExt;
+
+		let dir = std::env::temp_dir().join(format!("lomux_fake_ytdlp_{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let script = dir.join("yt-dlp");
+		std::fs::write(&script, concat!(
+			"#!/bin/sh\n",
+			"i=0\n",
+			"while [ $i -lt 3000 ]; do\n",
+			"  echo 'WARNING: enough text to fill the stderr pipe buffer' >&2\n",
+			"  i=$((i+1))\n",
+			"done\n",
+			"echo 'ERROR: HTTP Error 403: Forbidden' >&2\n",
+			"exit 1\n",
+		)).unwrap();
+		std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+		let console = Arc::new(Mutex::new(String::new()));
+		let cancel = Arc::new(Mutex::new(false));
+		let (done_tx, done_rx) = std::sync::mpsc::channel();
+		let (thread_console, thread_script, thread_dir) = (console.clone(), script.clone(), dir.clone());
+		thread::spawn(move || {
+			let result = download_youtube_video(
+				&thread_script,
+				"https://example.invalid/video",
+				&thread_dir,
+				&YtFormat::BestVideo,
+				&thread_console,
+				&|_| {},
+				&cancel,
+			);
+			let _ = done_tx.send(result);
+		});
+
+		let result = done_rx
+			.recv_timeout(std::time::Duration::from_secs(20))
+			.expect("download stalled on a full stderr pipe");
+		assert!(result.is_none());
+		let output = console.lock().unwrap().clone();
+		assert!(output.contains("ERROR: HTTP Error 403: Forbidden"), "real error must reach the console");
+		assert!(output.contains(&script.display().to_string()), "failure must name the yt-dlp in use");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	#[test]
+	fn ytdlp_age_counts_days_from_its_date_version() {
+		let oct_5_2026 = 1_791_158_400 / 86_400;
+		assert_eq!(days_from_civil(1970, 1, 1), 0);
+		assert_eq!(ytdlp_age_days("2026.10.05\n", oct_5_2026), Some(0));
+		assert_eq!(ytdlp_age_days("2026.08.18.122307", oct_5_2026), Some(48));
+		assert_eq!(ytdlp_age_days("2025.10.05", oct_5_2026), Some(365));
+		assert_eq!(ytdlp_age_days("2027.01.01", oct_5_2026), Some(0), "a future date is not negative");
+		assert_eq!(ytdlp_age_days("garbage", oct_5_2026), None);
+		assert_eq!(ytdlp_age_days("2026.13.01", oct_5_2026), None);
+		assert_eq!(ytdlp_age_days("2026.10", oct_5_2026), None);
+		assert_eq!(ytdlp_age_days("1.2.3", oct_5_2026), None, "a non-date version never reads as stale");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn stale_ytdlp_is_named_with_the_right_update_command() {
+		use std::os::unix::fs::PermissionsExt;
+
+		let dir = std::env::temp_dir().join(format!("lomux_stale_{}", std::process::id()));
+		let script = |rel: &str, body: &str| {
+			let path = dir.join(rel);
+			std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+			std::fs::write(&path, body).unwrap();
+			std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+			path
+		};
+		let old = script("standalone/yt-dlp", &format!("#!/bin/sh\necho 2020.01.01\n#{}\n", "x".repeat(5000)));
+		let fresh = script("fresh/yt-dlp", "#!/bin/sh\necho 2999.01.01\n");
+		let broken = script("broken/yt-dlp", "#!/bin/sh\necho oops >&2\nexit 1\n");
+		let brew = script("Cellar/yt-dlp/2020.01.01/bin/yt-dlp", "#!/bin/sh\necho 2020.01.01\n");
+		let pip = script("py/bin/yt-dlp", "#!/bin/sh\n# from yt_dlp import main\necho 2020.01.01\n");
+
+		let warning = ytdlp_staleness(&old).expect("a 2020 build is stale");
+		assert!(warning.contains("yt-dlp 2020.01.01 is "), "{warning}");
+		assert!(warning.ends_with("Update it: yt-dlp -U\n"), "{warning}");
+		assert_eq!(ytdlp_staleness(&fresh), None);
+		assert_eq!(ytdlp_staleness(&broken), None);
+		assert_eq!(ytdlp_staleness(&dir.join("missing")), None);
+		assert_eq!(ytdlp_update_hint(&brew), "brew upgrade yt-dlp");
+		assert_eq!(ytdlp_update_hint(&pip), "pip install -U yt-dlp");
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 }

@@ -80,15 +80,6 @@ sudo apt-get install -f  # resolve dependencies if needed
 </details>
 
 <details>
-<summary><b>Linux (Arch/AUR)</b></summary>
-
-```bash
-# Using an AUR helper like yay:
-yay -S lomux
-```
-</details>
-
-<details>
 <summary><b>Linux (Binary)</b></summary>
 
 ```bash
@@ -145,21 +136,31 @@ No certain reason, I was bored. You're getting free conversion software. Could'v
 
 ## Changelog
 
-### v1.3.0 (Current)
+### v1.3.1 (Current)
+**New**
+- With more than one yt-dlp installed, LoMux uses the newest one instead of whichever comes first on PATH
+- A yt-dlp older than 60 days gets a warning at startup. YouTube rejects old builds, so a failed download now says how old yours is and the command that updates it.
+
+**Fixes**
+- Fixed-size presets (YouTube 1080p, TikTok, Shorts, GIF…) stretched any video that wasn't already the right shape. Portrait into 1920×1080 came out squashed. The video now fits inside the frame with black bars and square pixels.
+- AV1 was hardwired to libaom, which plenty of ffmpeg builds don't have, so those encodes just failed. LoMux now uses whichever AV1 encoder your ffmpeg has (libaom or SVT-AV1), greys AV1 out when it has neither, and skips those files up front instead of failing partway.
+- A failed YouTube download said "Download failed" and nothing else. yt-dlp's own error now reaches the console, along with which yt-dlp ran.
+
+<details>
+<summary><b>Previous Versions</b></summary>
+
+### v1.3.0
 **New**
 - **Per-item presets.** Pick a preset for the whole queue like always, then override it on any individual file. The row shows which preset it's using, and the file list says "mixed presets" so a batch change never looks like it did nothing.
 - The console names the preset it used for each file as it converts, so a mixed batch is readable after the fact
 
 **Fixes**
-- `brew install`, the AUR package, and the RPM build were all broken. `Cargo.lock` was gitignored, so it never made it into the release tarball — and all three build with `--locked`, which refuses to run without one. Lockfile is committed now.
+- `brew install`, the Arch PKGBUILD, and the RPM build were all broken. `Cargo.lock` was gitignored, so it never made it into the release tarball — and all three build with `--locked`, which refuses to run without one. Lockfile is committed now.
 - The Homebrew tap had been stuck on v1.1.0 since it was created. The release workflow signed in with a token scoped to this repo, which can't push to the tap repo, and then swallowed the failure and reported success. It now uses a proper token, fails loudly, and refuses to publish a formula it knows won't build.
 - The formula it generated claimed GPL-3.0 (MIT since v1.2.0) and shipped a self-test asserting the wrong exit code
 - `--version` was hardcoded, so a 1.3.0 build would have cheerfully told you it was 1.2.0
 - The Discord preset promised "under 25MB" at a bitrate aimed at nothing in particular. Discord's free cap is 10MB now — the preset actually targets it, about 67 seconds of 720p30.
 - Subtitle container warnings checked the batch preset instead of the file you had selected
-
-<details>
-<summary><b>Previous Versions</b></summary>
 
 ### v1.2.0
 **New**
@@ -196,7 +197,7 @@ No certain reason, I was bored. You're getting free conversion software. Could'v
 - Fixed FFmpeg progress tracking (was reading wrong pipe)
 - Fixed extra arguments not being passed to FFmpeg
 - Output file conflict handling (no more silent overwrites)
-- Homebrew tap, .deb package, AUR support
+- Homebrew tap, .deb package, Arch PKGBUILD
 - Cleaner UI with accent-colored interactive elements
 
 **v1.0.2**

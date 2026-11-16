@@ -178,7 +178,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           TARBALL_URL="https://github.com/zblauser/LoMux/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz"
 
-          # The AUR package is published by hand, so catch a forgotten version bump here
+          # pkgver is bumped by hand, so catch a forgotten version bump here
           # rather than after users hit a 404 on the source URL.
           PKGVER=$(grep -m1 '^pkgver=' packaging/PKGBUILD | cut -d= -f2)
           if [ "$PKGVER" != "$VERSION" ]; then
